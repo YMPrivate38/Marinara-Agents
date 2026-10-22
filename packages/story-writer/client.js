@@ -51,7 +51,19 @@ class StoryWriterElement extends HTMLElement {
       row.append(h("strong", s.name || "Untitled"), h("span", when ? `Last activity ${new Date(when).toLocaleString()}` : "No activity yet"));
       const open = h("button", "Open");
       open.addEventListener("click", () => this.capabilityProps?.openChat?.(s.id));
-      row.append(open);
+      const exp = h("button", "Export EPUB");
+      const err = h("span", "");
+      exp.addEventListener("click", async () => {
+        exp.disabled = true;
+        err.textContent = "";
+        try {
+          await api().download(`/story-writer/epub/${encodeURIComponent(s.id)}`, "story.epub");
+        } catch (error) {
+          err.textContent = `Could not export: ${error?.message ?? error}`;
+        }
+        exp.disabled = false;
+      });
+      row.append(open, exp, err);
       root.append(row);
     }
 
