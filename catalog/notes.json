@@ -877,6 +877,16 @@
         }
       ]
     },
+    "story-writer": {
+      "versions": [
+        {
+          "version": "0.0.1",
+          "date": "2026-10-22",
+          "notes": "- Added: Story Writer appears as a Home tab. This first build only checks that the install works: it shows a button that stores a counter on the server.",
+          "highlight": false
+        }
+      ]
+    },
     "world-state": {
       "versions": [
         {
