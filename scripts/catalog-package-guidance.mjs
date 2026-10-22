@@ -151,6 +151,10 @@ export const OFFICIAL_PACKAGE_GUIDANCE = Object.freeze({
     modes: ["conversation", "roleplay", "game"],
     activation: "Install it, restart Marinara Engine when prompted, then open Home → Gacha Forge.",
   },
+  "fanfic-writer": {
+    modes: ["roleplay"],
+    activation: "Add the Agent in Chat Settings → Agents → Writer Agents for Roleplay mode.",
+  },
   "story-writer": {
     modes: ["conversation", "roleplay", "game"],
     activation: "Install it, restart Marinara Engine when prompted, then open Home → Story Writer.",

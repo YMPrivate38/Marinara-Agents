@@ -760,6 +760,45 @@
     },
     {
       "manifest": {
+        "schemaVersion": 1,
+        "id": "fanfic-writer",
+        "name": "Fanfic Writer",
+        "version": "0.1.0",
+        "description": "Turns a Roleplay chat into serial fanfiction: each reply is one complete chapter, planned by the agent with little steering from you. Add the Agent in Chat Settings → Agents → Writer Agents for Roleplay mode.",
+        "engine": {
+          "min": "2.3.0",
+          "maxExclusive": "4.0.0"
+        },
+        "kind": [
+          "agent"
+        ],
+        "entrypoints": {
+          "agents": "agents.json"
+        },
+        "files": [
+          {
+            "path": "agents.json",
+            "sha256": "00fd67c024bd9caa6c111a88d81c4dbd834373bcf1d2c85908a8ba5d24205ccc",
+            "bytes": 1866
+          }
+        ],
+        "permissions": [
+          "agent-runtime",
+          "chat-read",
+          "prompt-context"
+        ],
+        "restartRequired": false
+      },
+      "category": "misc",
+      "artifact": {
+        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/fanfic-writer-0.1.0.zip",
+        "sha256": "debca11da7a6ccac83a85d2eb9428ecbc212afd4e78d465b6a9eee0698331545",
+        "bytes": 2842
+      },
+      "documentationUrl": "https://github.com/YMPrivate38/Marinara-Agents/blob/main/packages/fanfic-writer/README.md"
+    },
+    {
+      "manifest": {
         "schemaVersion": 2,
         "capabilityApi": {
           "major": 1,
