@@ -1,5 +1,7 @@
 const TAG = "marinara-capability-story-writer";
-const AGENT = "fanfic-writer";
+// story-writer is the Plan Keeper (its agent id must equal the package id for the runtime hooks).
+const AGENTS = ["fanfic-writer", "story-writer"];
+const LISTS = ["outline", "secrets", "twists", "offscreen", "threads"];
 
 const meta = (c) => {
   try { return typeof c.metadata === "string" ? JSON.parse(c.metadata) : c.metadata ?? {}; } catch { return {}; }
@@ -25,6 +27,74 @@ class StoryWriterElement extends HTMLElement {
     try { return (typeof row.data === "string" ? JSON.parse(row.data) : row.data)?.name || row.id; } catch { return row.id; }
   }
 
+  // One line per item; a twist is "text | reveal hint".
+  static toLines(key, items) {
+    return (items ?? []).map((i) => (key === "twists" ? (i.reveal ? `${i.text} | ${i.reveal}` : i.text) : i)).join("\n");
+  }
+  static fromLines(key, text) {
+    return text.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+      if (key !== "twists") return l;
+      const [t, ...r] = l.split("|");
+      return { text: t.trim(), reveal: r.join("|").trim() || null };
+    });
+  }
+
+  async generatePlan(chatId, premise) {
+    return api().post(`/story-writer/plan/${encodeURIComponent(chatId)}`, { premise });
+  }
+
+  planPanel(story) {
+    const box = h("div", null, { style: "margin:4px 0 12px 16px;display:grid;gap:6px;max-width:560px" });
+    const url = `/story-writer/plan/${encodeURIComponent(story.id)}`;
+    let state = { plan: null, revision: null };
+    let shown = false;
+    let armed = false;
+    const msg = h("p", "");
+    const draw = () => {
+      armed = false;
+      const kids = [];
+      const { plan } = state;
+      const premise = h("textarea", plan?.premise ?? "", { rows: "2", placeholder: "Premise" });
+      if (!plan) kids.push(h("p", "No plan yet."), premise);
+      else if (!shown) kids.push(h("p", "Spoilers hidden."));
+      const reveal = h("button", shown ? "Hide spoilers" : "Reveal spoilers", { type: "button" });
+      reveal.addEventListener("click", () => { shown = !shown; draw(); });
+      const fields = {};
+      if (plan && shown) {
+        for (const k of LISTS) {
+          fields[k] = h("textarea", StoryWriterElement.toLines(k, plan[k]), { rows: "4" });
+          kids.push(h("label", k[0].toUpperCase() + k.slice(1) + (k === "twists" ? " (text | reveal hint)" : "")), fields[k]);
+        }
+        fields.beat = h("textarea", plan.beat, { rows: "2" });
+        kids.push(h("label", "Next beat"), fields.beat);
+      }
+      const save = h("button", "Save", { type: "button" });
+      save.addEventListener("click", async () => {
+        const next = { ...state.plan };
+        for (const k of LISTS) if (fields[k]) next[k] = StoryWriterElement.fromLines(k, fields[k].value);
+        if (fields.beat) next.beat = fields.beat.value;
+        try { state = await api().put(url, { plan: next, revision: state.revision }); msg.textContent = "Saved."; draw(); }
+        catch (error) { msg.textContent = `Could not save: ${error?.message ?? error}`; }
+      });
+      const regen = h("button", plan ? "Regenerate" : "Generate plan", { type: "button" });
+      regen.addEventListener("click", async () => {
+        // Two clicks: regenerating overwrites the stored plan.
+        if (plan && !armed) { armed = true; regen.textContent = "Confirm regenerate"; return; }
+        const text = (plan ? plan.premise : premise.value).trim();
+        if (!text) return void (msg.textContent = "Enter a premise first.");
+        regen.disabled = true;
+        msg.textContent = "Generating…";
+        try { state = await this.generatePlan(story.id, text); msg.textContent = ""; draw(); }
+        catch (error) { msg.textContent = `Could not generate the plan: ${error?.message ?? error}`; regen.disabled = false; }
+      });
+      const bar = h("div", null, { style: "display:flex;gap:8px" });
+      bar.append(...(plan ? [reveal] : []), ...(plan && shown ? [save] : []), regen);
+      box.replaceChildren(...kids, bar, msg);
+    };
+    api().get(url).then((r) => { state = r; draw(); }).catch((error) => { msg.textContent = `Could not load the plan: ${error?.message ?? error}`; box.append(msg); });
+    return box;
+  }
+
   connectedCallback() {
     this.load();
   }
@@ -44,6 +114,8 @@ class StoryWriterElement extends HTMLElement {
   render(stories, conns, chars) {
     const root = h("div", null, { style: "padding:24px" });
     root.append(h("h2", "Story Writer"));
+    if (this.notice) root.append(h("p", this.notice));
+    this.notice = "";
     if (!stories.length) root.append(h("p", "No stories yet. Start one below."));
     for (const s of stories) {
       const row = h("div", null, { style: "display:flex;gap:12px;align-items:center;margin:8px 0" });
@@ -63,12 +135,20 @@ class StoryWriterElement extends HTMLElement {
         }
         exp.disabled = false;
       });
-      row.append(open, exp, err);
+      const plan = h("button", "Plan");
+      let panel = null;
+      plan.addEventListener("click", () => {
+        if (panel) { panel.remove(); panel = null; return; }
+        panel = this.planPanel(s);
+        row.after(panel);
+      });
+      row.append(open, plan, exp, err);
       root.append(row);
     }
 
     const form = h("form", null, { style: "margin-top:24px;display:grid;gap:8px;max-width:360px" });
     const title = h("input", null, { required: "", placeholder: "Story title" });
+    const premise = h("textarea", null, { rows: "3", placeholder: "Premise (the hidden plan is drafted from it)" });
     const conn = h("select");
     conn.append(h("option", "Engine default", { value: "" }));
     for (const c of conns) conn.append(h("option", c.name || c.id, { value: c.id }));
@@ -77,7 +157,7 @@ class StoryWriterElement extends HTMLElement {
     for (const c of chars) char.append(h("option", StoryWriterElement.characterName(c), { value: c.id }));
     const status = h("p", "");
     const go = h("button", "Create story", { type: "submit" });
-    form.append(h("h3", "New story"), title, conn, char, go, status);
+    form.append(h("h3", "New story"), title, premise, conn, char, go, status);
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const name = title.value.trim();
@@ -86,15 +166,18 @@ class StoryWriterElement extends HTMLElement {
       status.textContent = "Creating…";
       try {
         const chat = await api().post("/chats", { name, mode: "roleplay", characterIds: char.value ? [char.value] : [], connectionId: conn.value || null });
-        // Only add the agent when installed; creating the story must not fail without it.
+        // Only add agents that are installed; creating the story must not fail without them.
         const agents = await api().get("/agents").catch(() => []);
-        const hasAgent = Array.isArray(agents) && agents.some((a) => a.type === AGENT || a.id === AGENT);
         const have = Array.isArray(meta(chat).activeAgentIds) ? meta(chat).activeAgentIds : [];
-        await api().patch(`/chats/${chat.id}/metadata`, {
-          storyWriter: true,
-          enableAgents: true,
-          activeAgentIds: hasAgent && !have.includes(AGENT) ? [...have, AGENT] : have,
-        });
+        const add = AGENTS.filter((a) => !have.includes(a) && Array.isArray(agents) && agents.some((x) => x.type === a || x.id === a));
+        await api().patch(`/chats/${chat.id}/metadata`, { storyWriter: true, enableAgents: true, activeAgentIds: [...have, ...add] });
+        if (premise.value.trim()) {
+          try {
+            await this.generatePlan(chat.id, premise.value.trim());
+          } catch (error) {
+            this.notice = `Story created, but the plan could not be generated: ${error?.message ?? error}. Open Plan on the story and press Generate plan.`;
+          }
+        }
         this.capabilityProps?.openChat?.(chat.id);
         this.load();
       } catch (error) {
