@@ -10,7 +10,7 @@
   },
   "id": "story-writer",
   "name": "Story Writer",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer.",
   "engine": {
     "min": "2.5.0",
@@ -47,13 +47,13 @@
     },
     {
       "path": "client.js",
-      "sha256": "14e45404ebeb4f7b8a0411c6f01a3a7e25858207fa82e3f30054145ac8f89078",
-      "bytes": 808
+      "sha256": "fbcbc012868825ab1ae9b8748fdf1e5c481b205e8809613d2861b13cc5b9180d",
+      "bytes": 4534
     },
     {
       "path": "server.mjs",
-      "sha256": "491d50a81a0e2070506b8ab77c844486d5d6f66613b0f6dea0c726cc43eb2b2e",
-      "bytes": 1354
+      "sha256": "bf83d4ae2c24bdc71e04f34c43e2cd7ac395a4896d0c6c20f186a6ab218fb2b5",
+      "bytes": 149
     }
   ]
 }
