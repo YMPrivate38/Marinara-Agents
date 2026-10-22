@@ -1,6 +1,7 @@
 const TAG = "marinara-capability-story-writer";
-// story-writer is the Plan Keeper (its agent id must equal the package id for the runtime hooks).
+// story-writer is the Plan Keeper (its agent id must equal the package id for the runtime hooks); fanfic-writer is the in-character checker.
 const AGENTS = ["fanfic-writer", "story-writer"];
+const POVS = ["third person limited", "third person omniscient", "first person", "second person"];
 const LISTS = ["outline", "secrets", "twists", "offscreen", "threads"];
 
 const meta = (c) => {
@@ -39,8 +40,20 @@ class StoryWriterElement extends HTMLElement {
     });
   }
 
-  async generatePlan(chatId, premise) {
-    return api().post(`/story-writer/plan/${encodeURIComponent(chatId)}`, { premise });
+  async generatePlan(chatId, premise, style) {
+    return api().post(`/story-writer/plan/${encodeURIComponent(chatId)}`, { premise, style });
+  }
+
+  // Chapter length / point of view / tense inputs; value() reads them back.
+  static styleFields(style) {
+    const words = h("input", null, { type: "number", min: "300", max: "8000", value: String(style.chapterWords) });
+    const pov = h("select");
+    for (const p of POVS) pov.append(h("option", p, { value: p }));
+    pov.value = style.pointOfView;
+    const tense = h("select");
+    for (const t of ["past", "present"]) tense.append(h("option", t, { value: t }));
+    tense.value = style.tense;
+    return { nodes: [h("label", "Chapter length (words)"), words, h("label", "Point of view"), pov, h("label", "Tense"), tense], value: () => ({ chapterWords: Number(words.value), pointOfView: pov.value, tense: tense.value }) };
   }
 
   planPanel(story) {
@@ -60,6 +73,8 @@ class StoryWriterElement extends HTMLElement {
       const reveal = h("button", shown ? "Hide spoilers" : "Reveal spoilers", { type: "button" });
       reveal.addEventListener("click", () => { shown = !shown; draw(); });
       const fields = {};
+      const style = plan ? StoryWriterElement.styleFields(plan.style) : null;
+      if (style) kids.push(...style.nodes);
       if (plan && shown) {
         for (const k of LISTS) {
           fields[k] = h("textarea", StoryWriterElement.toLines(k, plan[k]), { rows: "4" });
@@ -70,7 +85,7 @@ class StoryWriterElement extends HTMLElement {
       }
       const save = h("button", "Save", { type: "button" });
       save.addEventListener("click", async () => {
-        const next = { ...state.plan };
+        const next = { ...state.plan, style: style.value() };
         for (const k of LISTS) if (fields[k]) next[k] = StoryWriterElement.fromLines(k, fields[k].value);
         if (fields.beat) next.beat = fields.beat.value;
         try { state = await api().put(url, { plan: next, revision: state.revision }); msg.textContent = "Saved."; draw(); }
@@ -84,11 +99,11 @@ class StoryWriterElement extends HTMLElement {
         if (!text) return void (msg.textContent = "Enter a premise first.");
         regen.disabled = true;
         msg.textContent = "Generating…";
-        try { state = await this.generatePlan(story.id, text); msg.textContent = ""; draw(); }
+        try { state = await this.generatePlan(story.id, text, style?.value()); msg.textContent = ""; draw(); }
         catch (error) { msg.textContent = `Could not generate the plan: ${error?.message ?? error}`; regen.disabled = false; }
       });
       const bar = h("div", null, { style: "display:flex;gap:8px" });
-      bar.append(...(plan ? [reveal] : []), ...(plan && shown ? [save] : []), regen);
+      bar.append(...(plan ? [reveal, save] : []), regen);
       box.replaceChildren(...kids, bar, msg);
     };
     api().get(url).then((r) => { state = r; draw(); }).catch((error) => { msg.textContent = `Could not load the plan: ${error?.message ?? error}`; box.append(msg); });
@@ -149,6 +164,7 @@ class StoryWriterElement extends HTMLElement {
     const form = h("form", null, { style: "margin-top:24px;display:grid;gap:8px;max-width:360px" });
     const title = h("input", null, { required: "", placeholder: "Story title" });
     const premise = h("textarea", null, { rows: "3", placeholder: "Premise (the hidden plan is drafted from it)" });
+    const look = StoryWriterElement.styleFields({ chapterWords: 2500, pointOfView: POVS[0], tense: "past" });
     const conn = h("select");
     conn.append(h("option", "Engine default", { value: "" }));
     for (const c of conns) conn.append(h("option", c.name || c.id, { value: c.id }));
@@ -157,7 +173,7 @@ class StoryWriterElement extends HTMLElement {
     for (const c of chars) char.append(h("option", StoryWriterElement.characterName(c), { value: c.id }));
     const status = h("p", "");
     const go = h("button", "Create story", { type: "submit" });
-    form.append(h("h3", "New story"), title, premise, conn, char, go, status);
+    form.append(h("h3", "New story"), title, premise, ...look.nodes, conn, char, go, status);
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const name = title.value.trim();
@@ -171,12 +187,10 @@ class StoryWriterElement extends HTMLElement {
         const have = Array.isArray(meta(chat).activeAgentIds) ? meta(chat).activeAgentIds : [];
         const add = AGENTS.filter((a) => !have.includes(a) && Array.isArray(agents) && agents.some((x) => x.type === a || x.id === a));
         await api().patch(`/chats/${chat.id}/metadata`, { storyWriter: true, enableAgents: true, activeAgentIds: [...have, ...add] });
-        if (premise.value.trim()) {
-          try {
-            await this.generatePlan(chat.id, premise.value.trim());
-          } catch (error) {
-            this.notice = `Story created, but the plan could not be generated: ${error?.message ?? error}. Open Plan on the story and press Generate plan.`;
-          }
+        try {
+          await this.generatePlan(chat.id, premise.value.trim(), look.value());
+        } catch (error) {
+          this.notice = `Story created, but the plan could not be generated: ${error?.message ?? error}. Open Plan on the story and press Generate plan.`;
         }
         this.capabilityProps?.openChat?.(chat.id);
         this.load();

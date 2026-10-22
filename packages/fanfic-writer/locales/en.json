@@ -6,12 +6,12 @@
   },
   "package": {
     "name": "Fanfic Writer",
-    "description": "Turns a Roleplay chat into serial fanfiction: each reply is one complete chapter, planned by the agent with little steering from you. Add the Agent in Chat Settings → Agents → Writer Agents for Roleplay mode."
+    "description": "Checks fanfiction replies for out-of-character writing and things that don't make sense, and rewrites them when they fall short. Add the Agent in Chat Settings → Agents → Writer Agents for Roleplay mode."
   },
   "agents": {
     "fanfic-writer": {
       "name": "Fanfic Writer",
-      "description": "Turns a Roleplay chat into serial fanfiction: each reply is one complete chapter, planned by the agent with little steering from you."
+      "description": "Checks fanfiction replies for out-of-character writing and things that don't make sense, and rewrites them when they fall short."
     }
   }
 }

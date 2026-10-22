@@ -763,8 +763,8 @@
         "schemaVersion": 1,
         "id": "fanfic-writer",
         "name": "Fanfic Writer",
-        "version": "0.1.0",
-        "description": "Turns a Roleplay chat into serial fanfiction: each reply is one complete chapter, planned by the agent with little steering from you. Add the Agent in Chat Settings → Agents → Writer Agents for Roleplay mode.",
+        "version": "0.2.0",
+        "description": "Checks fanfiction replies for out-of-character writing and things that don't make sense, and rewrites them when they fall short. Add the Agent in Chat Settings → Agents → Writer Agents for Roleplay mode.",
         "engine": {
           "min": "2.3.0",
           "maxExclusive": "4.0.0"
@@ -778,22 +778,24 @@
         "files": [
           {
             "path": "agents.json",
-            "sha256": "00fd67c024bd9caa6c111a88d81c4dbd834373bcf1d2c85908a8ba5d24205ccc",
-            "bytes": 1866
+            "sha256": "456be1aa9e4f97b64aa088b55a316a66bd4d806649aa18cca46a555cecda4b9a",
+            "bytes": 2821
           }
         ],
         "permissions": [
           "agent-runtime",
           "chat-read",
-          "prompt-context"
+          "prompt-context",
+          "storage",
+          "ui"
         ],
         "restartRequired": false
       },
       "category": "misc",
       "artifact": {
-        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/fanfic-writer-0.1.0.zip",
-        "sha256": "debca11da7a6ccac83a85d2eb9428ecbc212afd4e78d465b6a9eee0698331545",
-        "bytes": 2842
+        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/fanfic-writer-0.2.0.zip",
+        "sha256": "4b82e3e863f0d8c7ab3b90fdd91ff329327e2ae08c74eb4daf4b3a85a62e3fa8",
+        "bytes": 3817
       },
       "documentationUrl": "https://github.com/YMPrivate38/Marinara-Agents/blob/main/packages/fanfic-writer/README.md"
     },
@@ -3711,7 +3713,7 @@
         },
         "id": "story-writer",
         "name": "Story Writer",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer.",
         "engine": {
           "min": "2.5.0",
@@ -3751,8 +3753,8 @@
           },
           {
             "path": "client.js",
-            "sha256": "f7f363d4610a446448632708c7649f4265569aa8d3c960dd1376d9d696fdc232",
-            "bytes": 9470
+            "sha256": "a117952af6c218706252256718f7e98469a61e9fc77fb30e916d0753b3c4b13a",
+            "bytes": 10577
           },
           {
             "path": "epub.mjs",
@@ -3761,21 +3763,21 @@
           },
           {
             "path": "plan.mjs",
-            "sha256": "915d274cfae86b096c28a3e9934a5e4804b95aa7367459f44f531784af64086f",
-            "bytes": 4316
+            "sha256": "96d5f9fa79f63c5ae1b80c6d117b27ba481419712fa586258ad60c8b8f41e962",
+            "bytes": 5314
           },
           {
             "path": "server.mjs",
-            "sha256": "f464cff0a56eb780c8efeac86123a9cc277084d60268bb161361ab49fe2a8d02",
-            "bytes": 4503
+            "sha256": "2d291cb7bf675318e4adaae76ebf1e3137bd4a4a05396ed78008a3b120d1a77b",
+            "bytes": 4844
           }
         ]
       },
       "category": "misc",
       "artifact": {
-        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/story-writer-0.3.0.zip",
-        "sha256": "eba0446f75c1d620cdf36c5e2782141855baa16f3b4031ae298b0e689a937fbb",
-        "bytes": 27386
+        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/story-writer-0.4.0.zip",
+        "sha256": "f6141cc01bb697971307111690d1fcbba0835765f082c847ef5b3bd75da7ddd2",
+        "bytes": 29833
       },
       "documentationUrl": "https://github.com/YMPrivate38/Marinara-Agents/blob/main/packages/story-writer/README.md"
     },

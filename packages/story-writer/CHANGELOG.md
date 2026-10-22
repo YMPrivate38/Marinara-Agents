@@ -1,3 +1,7 @@
+## 0.4.0 — 2026-10-22
+- Added: The New story form and the Plan panel now set chapter length (300-8000 words), point of view and tense. Every reply in a story is asked to be one complete chapter in that style, ending on a natural chapter break, with no extra model call. These settings are not spoilers, so the Plan panel shows them even while spoilers are hidden.
+- Changed: Fanfic Writer is now the checker for out-of-character writing, so new stories get it as a quality check instead of a chapter planner.
+
 ## 0.3.0 — 2026-10-22
 - Added: Each story now has a hidden plan (outline, secrets, twists, offscreen events, open threads, next beat). The new Story Plan Keeper agent updates it after every chapter, and the writer only ever receives the next beat. The New story form takes a premise and drafts the plan; the Plan button on each story shows it, with spoilers hidden until you choose Reveal spoilers. Needs the new prompt-context and agent-runtime permissions.
 

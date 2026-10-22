@@ -172,6 +172,12 @@
     "fanfic-writer": {
       "versions": [
         {
+          "version": "0.2.0",
+          "date": "2026-10-22",
+          "notes": "- Changed: Fanfic Writer now checks each Roleplay reply for out-of-character writing and things that don't make sense, and rewrites the reply when a score falls below the minimum, instead of planning chapters. Chapter length, point of view and tense moved to Story Writer.",
+          "highlight": true
+        },
+        {
           "version": "0.1.0",
           "date": "2026-10-22",
           "notes": "- Added: Fanfic Writer plans each Roleplay reply as one complete chapter of serial fiction, with a chapter length, point of view and tense you can change. Add it in Chat Settings → Agents → Writer Agents.",
@@ -889,6 +895,12 @@
     },
     "story-writer": {
       "versions": [
+        {
+          "version": "0.4.0",
+          "date": "2026-10-22",
+          "notes": "- Added: The New story form and the Plan panel now set chapter length (300-8000 words), point of view and tense. Every reply in a story is asked to be one complete chapter in that style, ending on a natural chapter break, with no extra model call. These settings are not spoilers, so the Plan panel shows them even while spoilers are hidden.\n- Changed: Fanfic Writer is now the checker for out-of-character writing, so new stories get it as a quality check instead of a chapter planner.",
+          "highlight": true
+        },
         {
           "version": "0.3.0",
           "date": "2026-10-22",

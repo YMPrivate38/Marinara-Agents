@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "fanfic-writer",
   "name": "Fanfic Writer",
-  "version": "0.1.0",
-  "description": "Turns a Roleplay chat into serial fanfiction: each reply is one complete chapter, planned by the agent with little steering from you. Add the Agent in Chat Settings → Agents → Writer Agents for Roleplay mode.",
+  "version": "0.2.0",
+  "description": "Checks fanfiction replies for out-of-character writing and things that don't make sense, and rewrites them when they fall short. Add the Agent in Chat Settings → Agents → Writer Agents for Roleplay mode.",
   "engine": {
     "min": "2.3.0",
     "maxExclusive": "4.0.0"
@@ -17,14 +17,16 @@
   "files": [
     {
       "path": "agents.json",
-      "sha256": "00fd67c024bd9caa6c111a88d81c4dbd834373bcf1d2c85908a8ba5d24205ccc",
-      "bytes": 1866
+      "sha256": "456be1aa9e4f97b64aa088b55a316a66bd4d806649aa18cca46a555cecda4b9a",
+      "bytes": 2821
     }
   ],
   "permissions": [
     "agent-runtime",
     "chat-read",
-    "prompt-context"
+    "prompt-context",
+    "storage",
+    "ui"
   ],
   "restartRequired": false
 }

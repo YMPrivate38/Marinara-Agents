@@ -10,6 +10,18 @@ const twists = (v) =>
     .filter((t) => t.text)
     .slice(0, 12);
 
+export const POVS = ["third person limited", "third person omniscient", "first person", "second person"];
+export const TENSES = ["past", "present"];
+export function normalizeStyle(raw) {
+  const s = raw && typeof raw === "object" ? raw : {};
+  const words = Math.round(Number(s.chapterWords));
+  return {
+    chapterWords: Number.isFinite(words) ? Math.min(8000, Math.max(300, words)) : 2500,
+    pointOfView: POVS.includes(s.pointOfView) ? s.pointOfView : POVS[0],
+    tense: TENSES.includes(s.tense) ? s.tense : TENSES[0],
+  };
+}
+
 export function normalizePlan(raw) {
   const p = raw && typeof raw === "object" ? raw : {};
   return {
@@ -22,10 +34,11 @@ export function normalizePlan(raw) {
     beat: str(p.beat, 800),
     chapter: Number.isInteger(p.chapter) && p.chapter >= 0 ? Math.min(p.chapter, 9999) : 0,
     updatedAt: str(p.updatedAt, 40),
+    style: normalizeStyle(p.style),
   };
 }
 
-// Only known fields are taken; a missing beat clears the old one so a stale beat is never replayed.
+// Only known fields are taken (style is never taken from the agent); a missing beat clears the old one so a stale beat is never replayed.
 export function mergePlanUpdate(plan, update, now = new Date().toISOString()) {
   const cur = normalizePlan(plan);
   const u = update && typeof update === "object" ? update : {};
@@ -33,10 +46,11 @@ export function mergePlanUpdate(plan, update, now = new Date().toISOString()) {
   return { ...next, chapter: cur.chapter + 1, updatedAt: now };
 }
 
-// The only plan text that ever reaches the writer prompt.
+// The only plan text that ever reaches the writer prompt: style (not a spoiler) and the beat.
 export function beatBlock(plan) {
-  const beat = normalizePlan(plan).beat;
-  return beat ? `Next chapter should deliver this beat. Do not mention that it was planned.\nBeat: ${beat}` : "";
+  const { beat, style } = normalizePlan(plan);
+  const head = `Write your next reply as ONE complete chapter of about ${style.chapterWords} words, in ${style.pointOfView}, ${style.tense} tense. Continue directly from where the previous chapter ended and end on a natural chapter break (a cliffhanger, a reveal or a quiet turn), not a recap or a moral. Do not wait for the user.`;
+  return beat ? `${head}\nDeliver this beat. Do not mention that it was planned.\nBeat: ${beat}` : head;
 }
 
 export async function readPlan(documents, chatId) {
@@ -56,7 +70,8 @@ export function createContributor(documents) {
   return async ({ chatId, chatMeta }) => {
     if (chatMeta?.storyWriter !== true) return undefined;
     try {
-      return beatBlock((await readPlan(documents, chatId))?.data) || undefined;
+      const doc = await readPlan(documents, chatId);
+      return doc ? beatBlock(doc.data) : undefined;
     } catch {
       return undefined; // a failed read must never block the chapter
     }
