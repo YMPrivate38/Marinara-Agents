@@ -1,4 +1,4 @@
-// Build the Story Writer package: re-derive its manifest hashes and English locale
+// Build a fork-owned package (node scripts/build-fork-package.mjs <id>): re-derive its manifest hashes and English locale
 // from the committed payloads, write a reproducible artifact zip, and update the
 // catalog family. The client.js and server.mjs payloads are contributed as pre-built
 // esbuild bundles from the package's own source tree, which lives outside this
@@ -15,7 +15,9 @@ import { writeEnglishPackageLocale } from "./package-locales.mjs";
 import { createDeterministicZip } from "./deterministic-zip.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const packageRoot = join(repoRoot, "packages/story-writer");
+const id = process.argv[2];
+if (!id || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(id)) throw new Error("usage: build-fork-package.mjs <package-id>");
+const packageRoot = join(repoRoot, "packages", id);
 const artifactsDir = join(repoRoot, "artifacts");
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
@@ -45,11 +47,11 @@ const archive = createDeterministicZip([
   ...payloads.map(({ name, buffer }) => ({ name, data: buffer })),
 ]);
 await mkdir(artifactsDir, { recursive: true });
-const artifactPath = join(artifactsDir, `story-writer-${manifest.version}.zip`);
+const artifactPath = join(artifactsDir, `${id}-${manifest.version}.zip`);
 await writeFile(artifactPath, archive);
 
 const { catalog } = await readCatalogFamily(repoRoot);
-catalog.packages = catalog.packages.filter((entry) => entry.manifest.id !== "story-writer");
+catalog.packages = catalog.packages.filter((entry) => entry.manifest.id !== id);
 catalog.packages.push({
   manifest,
   category: "misc",
@@ -58,12 +60,12 @@ catalog.packages.push({
     sha256: sha256(archive),
     bytes: archive.byteLength,
   },
-  documentationUrl: "https://github.com/YMPrivate38/Marinara-Agents/blob/main/packages/story-writer/README.md",
+  documentationUrl: `https://github.com/YMPrivate38/Marinara-Agents/blob/main/packages/${id}/README.md`,
 });
 catalog.packages.sort((left, right) => left.manifest.name.localeCompare(right.manifest.name));
 // generatedAt is resolved centrally in writeCatalogFamily (preserved by
 // default; refreshed only when MARINARA_CATALOG_STAMP_GENERATED_AT=1).
 await writeCatalogFamily(repoRoot, catalog);
 
-console.log(`built story-writer ${manifest.version}`);
+console.log(`built ${id} ${manifest.version}`);
 console.log(`  ${payloads.length} payload files, artifact ${archive.byteLength} bytes`);
