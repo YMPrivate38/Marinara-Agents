@@ -1,0 +1,22 @@
+[
+  {
+    "id": "story-writer",
+    "name": "Story Writer",
+    "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer.",
+    "author": "YMPrivate38",
+    "phase": "pre_generation",
+    "enabledByDefault": false,
+    "category": "misc",
+    "runtimeDisabled": true,
+    "libraryHidden": true,
+    "modeAllowlist": [
+      "conversation",
+      "roleplay",
+      "game"
+    ],
+    "defaultTools": [],
+    "defaultSettings": {},
+    "defaultPromptTemplate": "",
+    "execution": "feature"
+  }
+]

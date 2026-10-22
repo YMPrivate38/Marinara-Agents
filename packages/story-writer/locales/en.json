@@ -1,0 +1,17 @@
+{
+  "$schema": "../../../schemas/package-localization.schema.json",
+  "_meta": {
+    "locale": "en",
+    "direction": "ltr"
+  },
+  "package": {
+    "name": "Story Writer",
+    "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer."
+  },
+  "agents": {
+    "story-writer": {
+      "name": "Story Writer",
+      "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer."
+    }
+  }
+}

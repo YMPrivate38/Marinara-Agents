@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 2,
+  "capabilityApi": {
+    "major": 1,
+    "minor": 341
+  },
+  "builtAgainst": {
+    "engineVersion": "2.5.1",
+    "engineCommit": "457e827a3d3291be978121f8c50c98c5dd9d644d"
+  },
+  "id": "story-writer",
+  "name": "Story Writer",
+  "version": "0.0.1",
+  "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer.",
+  "engine": {
+    "min": "2.5.0",
+    "maxExclusive": "4.0.0"
+  },
+  "kind": [
+    "agent"
+  ],
+  "entrypoints": {
+    "agents": "agents.json",
+    "client": "client.js",
+    "server": "server.mjs"
+  },
+  "contributions": {
+    "slots": [
+      "home-browser-tab"
+    ],
+    "homeBrowserTab": {
+      "label": "Story Writer",
+      "ariaLabel": "Open Story Writer"
+    }
+  },
+  "permissions": [
+    "routes",
+    "storage",
+    "ui"
+  ],
+  "restartRequired": true,
+  "files": [
+    {
+      "path": "agents.json",
+      "sha256": "4414994a36c180caec9c566c700cca42caf0e1a7f1b8377eaaf797d82487bf3d",
+      "bytes": 613
+    },
+    {
+      "path": "client.js",
+      "sha256": "14e45404ebeb4f7b8a0411c6f01a3a7e25858207fa82e3f30054145ac8f89078",
+      "bytes": 808
+    },
+    {
+      "path": "server.mjs",
+      "sha256": "491d50a81a0e2070506b8ab77c844486d5d6f66613b0f6dea0c726cc43eb2b2e",
+      "bytes": 1354
+    }
+  ]
+}

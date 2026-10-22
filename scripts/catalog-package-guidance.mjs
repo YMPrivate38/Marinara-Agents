@@ -151,6 +151,10 @@ export const OFFICIAL_PACKAGE_GUIDANCE = Object.freeze({
     modes: ["conversation", "roleplay", "game"],
     activation: "Install it, restart Marinara Engine when prompted, then open Home → Gacha Forge.",
   },
+  "story-writer": {
+    modes: ["conversation", "roleplay", "game"],
+    activation: "Install it, restart Marinara Engine when prompted, then open Home → Story Writer.",
+  },
   "modern-life-sim": {
     modes: ["conversation", "roleplay", "game"],
     activation: "Install it, restart Marinara Engine when prompted, then open Home → Life Sim.",
