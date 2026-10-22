@@ -4,7 +4,7 @@ import { beatBlock, createAgentRuntime, createContributor, mergePlanUpdate, norm
 const plan = {
   premise: "PREMISE_MARK", outline: ["OUTLINE_MARK"], secrets: ["SECRET_MARK"],
   twists: [{ text: "TWIST_MARK", reveal: "REVEAL_MARK" }], offscreen: ["OFFSCREEN_MARK"], threads: ["THREAD_MARK"],
-  beat: "The harbor bell rings.", chapter: 2,
+  beat: "The harbor bell rings.", chapter: 2, style: { chapterWords: 1800, pointOfView: "first person", tense: "present" },
 };
 const marks = ["PREMISE_MARK", "OUTLINE_MARK", "SECRET_MARK", "TWIST_MARK", "REVEAL_MARK", "OFFSCREEN_MARK", "THREAD_MARK"];
 const noMarks = (text) => marks.forEach((m) => assert.ok(!String(text).includes(m), `leaked ${m}`));
@@ -12,8 +12,16 @@ const noMarks = (text) => marks.forEach((m) => assert.ok(!String(text).includes(
 // (1) + (2) only the beat reaches the writer
 assert.ok(beatBlock(plan).includes("The harbor bell rings."));
 noMarks(beatBlock(plan));
-assert.equal(beatBlock({ ...plan, beat: "  " }), "");
-assert.equal(beatBlock(null), "");
+for (const w of ["1800", "first person", "present"]) assert.ok(beatBlock(plan).includes(w), `style missing ${w}`);
+// no beat: the style instruction is still there, without a Beat line
+assert.ok(beatBlock({ ...plan, beat: "  " }).includes("1800") && !beatBlock({ ...plan, beat: "  " }).includes("Beat:"));
+assert.ok(beatBlock(null).includes("2500"));
+
+// style: clamped, validated, and untouchable by the Plan Keeper
+assert.deepEqual(normalizePlan({ style: { chapterWords: 99999, pointOfView: "x", tense: "future" } }).style, { chapterWords: 8000, pointOfView: "third person limited", tense: "past" });
+assert.equal(normalizePlan({ style: { chapterWords: 5 } }).style.chapterWords, 300);
+assert.equal(normalizePlan({ style: { chapterWords: "abc" } }).style.chapterWords, 2500);
+assert.deepEqual(mergePlanUpdate(plan, { beat: "b", style: { chapterWords: 400, pointOfView: "second person", tense: "past" } }).style, plan.style);
 
 // (3) caps and sanitizing
 const big = normalizePlan({ premise: "x".repeat(9999), outline: Array(99).fill("y".repeat(999)), secrets: [1, null, "ok", " "], twists: ["a", { text: 5 }, { text: "b", reveal: "c" }], beat: 42, chapter: "3" });
@@ -50,6 +58,9 @@ assert.ok((await contribute({ chatId: "c1", chatMeta: { storyWriter: true } })).
 assert.equal(await contribute({ chatId: "c1", chatMeta: {} }), undefined);
 assert.equal(await contribute({ chatId: "c1", chatMeta: { storyWriter: "true" } }), undefined);
 assert.equal(await contribute({ chatId: "none", chatMeta: { storyWriter: true } }), undefined);
+const block = await contribute({ chatId: "c1", chatMeta: { storyWriter: true } });
+assert.ok(block.includes("1800") && block.includes("first person") && block.includes("present"));
+noMarks(block);
 const broken = createContributor({ getById: async () => { throw new Error("db down"); } });
 assert.equal(await broken({ chatId: "c1", chatMeta: { storyWriter: true } }), undefined);
 

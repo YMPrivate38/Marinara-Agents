@@ -1,5 +1,5 @@
 import { buildEpub, chaptersFromMessages } from "./epub.mjs";
-import { createAgentRuntime, createContributor, normalizePlan, readPlan, writePlan } from "./plan.mjs";
+import { createAgentRuntime, createContributor, normalizePlan, normalizeStyle, readPlan, writePlan } from "./plan.mjs";
 
 const PLAN_PROMPT = `You are the hidden author of a serial story. From the premise, plan it. Return ONLY JSON, no prose:
 {"outline":["chapter-level beats"],"secrets":["facts the reader does not know yet"],"twists":[{"text":"...","reveal":"chapter hint or null"}],"offscreen":["what characters do out of sight"],"threads":["open plot threads"],"beat":"what happens in chapter 1"}
@@ -55,6 +55,10 @@ export async function activate({ api }) {
         const chat = await story(request, reply);
         if (!chat) return;
         const premise = typeof request.body?.premise === "string" ? request.body.premise.trim().slice(0, 2000) : "";
+        const existing = await readPlan(documents, chat.id);
+        const style = normalizeStyle(request.body?.style ?? existing?.data?.style);
+        // No premise: store just the chapter style, no model call.
+        if (!premise && request.body?.style) return view(await writePlan(documents, chat.id, normalizePlan({ ...existing?.data, style }), existing?.revision ?? null));
         if (!premise) return reply.code(400).send({ error: "A premise is required" });
         try {
           const model = await languageModels.resolveForRequest({ chatConnectionId: chat.connectionId ?? null });
@@ -62,8 +66,7 @@ export async function activate({ api }) {
             [{ role: "system", content: PLAN_PROMPT }, { role: "user", content: premise }],
             { temperature: 0.8, maxTokens: 2000 },
           );
-          const plan = normalizePlan({ ...json.parseJsonish(out.content ?? ""), premise });
-          const existing = await readPlan(documents, chat.id);
+          const plan = normalizePlan({ ...json.parseJsonish(out.content ?? ""), premise, style });
           return view(await writePlan(documents, chat.id, plan, existing?.revision ?? null));
         } catch (error) {
           return reply.code(502).send({ error: `Could not generate the plan: ${error?.message ?? error}` });
