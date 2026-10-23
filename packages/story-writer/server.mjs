@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { buildEpub, chaptersFromDocs } from "./epub.mjs";
-import { chapterId, JobRunner, storyView, writeChapter } from "./pipeline.mjs";
-import { normalizePlan, normalizeStyle, PACKAGE_ID, readPlan, writePlan } from "./plan.mjs";
+import { chapterId, formatCharacters, formatLorebook, JobRunner, storyView, writeChapter } from "./pipeline.mjs";
+import { normalizePlan, normalizeSettings, normalizeStyle, PACKAGE_ID, readPlan, writePlan } from "./plan.mjs";
 
-const PLAN_PROMPT = `You are the hidden author of a serial story. From the premise, plan it. Return ONLY JSON, no prose:
+const PLAN_PROMPT = `You are the hidden author of a serial story. From the premise (and any character cards and lore), plan it. Stay faithful to the cards and the premise; plan ordinary, character-driven progress, not shocks. Return ONLY JSON, no prose:
 {"outline":["chapter-level beats"],"secrets":["facts the reader does not know yet"],"twists":[{"text":"...","reveal":"chapter hint or null"}],"offscreen":["what characters do out of sight"],"threads":["open plot threads"],"beat":"what happens in chapter 1"}
 Keep every item to one sentence.`;
+
+const TWIST_PLAN = {
+  none: "Leave twists empty and plan no reveals.",
+  rare: "Plan at most one twist, and only if the premise implies it; otherwise leave twists empty.",
+  free: "Plan up to three twists, each seeded early and revealed late.",
+};
 
 const TIMEOUT_MESSAGE =
   "The model call timed out. Raise AGENT_CALL_TIMEOUT_MS in the Engine .env or lower the chapter length.";
@@ -74,7 +80,31 @@ export async function activate({ api }) {
     return chapters;
   };
 
-  const createPlan = async ({ storyId, premise, style, connectionId }) => {
+  // Cards and lore ground the plan, otherwise it invents its own cast and the writer follows that.
+  const planContext = async (story, premise) => {
+    const safe = async (fn) => {
+      try {
+        return (await fn()) ?? [];
+      } catch {
+        return [];
+      }
+    };
+    const cards = story.characterIds?.length ? formatCharacters(await safe(() => resources.listCharacters(story.characterIds))) : "";
+    const lore = story.lorebookIds?.length
+      ? formatLorebook(await safe(() => resources.listEligibleLorebookEntries({ lorebookIds: story.lorebookIds, entryIds: [] })))
+      : "";
+    const intro = normalizeSettings(story.settings).intro;
+    return [
+      `Premise:\n${premise}`,
+      cards && `Character cards (canon):\n${cards}`,
+      lore && `Lorebook (canon):\n${lore}`,
+      intro && `Opening scene:\n${intro}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  };
+
+  const createPlan = async ({ storyId, premise, style, connectionId, story = {} }) => {
     const cleanPremise = typeof premise === "string" ? premise.trim().slice(0, 2000) : "";
     const existing = await readPlan(documents, storyId);
     const nextStyle = normalizeStyle(style ?? existing?.data?.style);
@@ -86,7 +116,7 @@ export async function activate({ api }) {
       connectionId: connectionId ?? undefined,
     });
     const out = await model.chatComplete(
-      [{ role: "system", content: PLAN_PROMPT }, { role: "user", content: cleanPremise }],
+      [{ role: "system", content: `${PLAN_PROMPT}\n${TWIST_PLAN[normalizeSettings(story.settings).twists]}` }, { role: "user", content: await planContext(story, cleanPremise) }],
       { temperature: 0.8, maxTokens: 2000 },
     );
     const plan = normalizePlan({ ...json.parseJsonish(out.content ?? ""), premise: cleanPremise, style: nextStyle });
@@ -105,7 +135,7 @@ export async function activate({ api }) {
     const premise = typeof request.body?.premise === "string" ? request.body.premise.trim().slice(0, 2000) : "";
     if (!premise && !request.body?.style) return reply.code(400).send({ error: "A premise is required" });
     try {
-      return view(await createPlan({ storyId: doc.id, premise, style: request.body?.style, connectionId: doc.data?.connectionId ?? null }));
+      return view(await createPlan({ storyId: doc.id, premise, style: request.body?.style, connectionId: doc.data?.connectionId ?? null, story: doc.data }));
     } catch (error) {
       return reply.code(502).send({ error: `Could not generate the plan: ${error?.message ?? error}` });
     }
@@ -162,6 +192,7 @@ export async function activate({ api }) {
           return reply.code(400).send({ error: "connectionId must be a string or null" });
         }
 
+        const settings = normalizeSettings(body.settings);
         const id = `story:${randomUUID()}`;
         const createdAt = new Date().toISOString();
         const premise = typeof body.premise === "string" ? body.premise.trim() : "";
@@ -175,17 +206,25 @@ export async function activate({ api }) {
           kind: "story",
           name: title,
           description: "Story Writer story.",
-          data: { title, premise, characterIds, lorebookIds, connectionId, chapterCount: 0, createdAt },
+          data: { title, premise, characterIds, lorebookIds, connectionId, settings, chapterCount: 0, createdAt },
           createdAt,
           updatedAt: createdAt,
         });
 
         try {
-          await createPlan({ storyId: id, premise, style: body.style, connectionId });
+          await createPlan({ storyId: id, premise, style: body.style, connectionId, story: { characterIds, lorebookIds, settings } });
           return reply.code(201).send({ id });
         } catch (error) {
           return reply.code(201).send({ id, planError: error?.message ?? String(error) });
         }
+      });
+
+      app.put("/stories/:id/settings", async (request, reply) => {
+        const doc = await docStory(request, reply);
+        if (!doc) return;
+        const settings = normalizeSettings(request.body);
+        await documents.update({ id: doc.id, packageId: PACKAGE_ID, name: doc.name, description: doc.description, data: { ...doc.data, settings }, updatedAt: new Date().toISOString(), expectedRevision: doc.revision });
+        return { settings };
       });
 
       app.get("/stories/:id", async (request, reply) => {

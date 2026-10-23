@@ -1,6 +1,12 @@
 const TAG = "marinara-capability-story-writer";
+const STYLE_ID = "sw-theme-style";
 const POVS = ["third person limited", "third person omniscient", "first person", "second person"];
 const TENSES = ["past", "present"];
+const TWISTS = [
+  ["none", "None"],
+  ["rare", "Rare"],
+  ["free", "Free"],
+];
 const LISTS = ["outline", "secrets", "offscreen", "threads", "twists"];
 const PHASES = {
   writing: "Writing",
@@ -9,32 +15,126 @@ const PHASES = {
   planning: "Planning what comes next",
 };
 
+const CSS = `
+marinara-capability-story-writer { display:block; color:var(--foreground); background:var(--background); font-family:system-ui,-apple-system,sans-serif; box-sizing:border-box; }
+marinara-capability-story-writer *, marinara-capability-story-writer *::before, marinara-capability-story-writer *::after { box-sizing:border-box; }
+.sw-root { padding:20px; display:grid; gap:12px; max-width:720px; width:100%; margin:0 auto; overflow-wrap:break-word; }
+.sw-head, .sw-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.sw-head-between { justify-content:space-between; }
+.sw-form, .sw-stack, .sw-picker, .sw-results, .sw-chapters { display:grid; gap:8px; width:100%; }
+.sw-card, .sw-panel, .sw-advanced, .sw-settings, .sw-chapter { background:var(--card); color:var(--card-foreground); border:1px solid var(--border); border-radius:var(--radius, 8px); padding:12px; display:grid; gap:8px; }
+.sw-advanced > summary, .sw-settings > summary { cursor:pointer; font-weight:600; color:var(--card-foreground); }
+.sw-label { font-weight:500; color:var(--foreground); display:flex; gap:8px; align-items:center; }
+.sw-input, .sw-select, .sw-textarea { background:var(--input, var(--background)); color:var(--foreground); border:1px solid var(--border); border-radius:var(--radius, 6px); padding:8px 10px; font:inherit; width:100%; max-width:100%; }
+.sw-input[type="checkbox"] { width:auto; padding:0; }
+.sw-input:focus, .sw-select:focus, .sw-textarea:focus, .sw-btn:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
+.sw-btn { background:var(--secondary); color:var(--secondary-foreground); border:1px solid var(--border); border-radius:var(--radius, 6px); padding:6px 12px; font:inherit; cursor:pointer; }
+.sw-btn-primary { background:var(--primary); color:var(--primary-foreground); border-color:var(--primary); }
+.sw-btn-ghost { background:transparent; color:var(--foreground); border:1px solid var(--border); }
+.sw-btn-destructive { background:var(--destructive); color:var(--primary-foreground); border-color:var(--destructive); }
+.sw-btn:disabled { opacity:0.6; cursor:not-allowed; }
+.sw-muted { color:var(--muted-foreground); margin:0; font-size:0.9em; }
+.sw-chips { display:flex; gap:6px; flex-wrap:wrap; }
+.sw-chip { display:inline-flex; gap:4px; align-items:center; background:var(--secondary); color:var(--secondary-foreground); border:1px solid var(--border); border-radius:999px; padding:2px 10px; }
+.sw-reader-pane { background:var(--card); color:var(--card-foreground); border:1px solid var(--border); border-radius:var(--radius, 8px); margin-top:16px; padding:16px; max-width:70ch; line-height:1.7; font-family:system-ui,-apple-system,sans-serif; display:grid; gap:12px; }
+@media (max-width: 600px) { .sw-root { padding:12px; } }
+`.trim();
+
+const TAG_CLASS = {
+  button: "sw-btn",
+  input: "sw-input",
+  select: "sw-select",
+  textarea: "sw-textarea",
+  label: "sw-label",
+};
+
 const h = (tag, text, attrs = {}) => {
   const e = document.createElement(tag);
   if (text != null) {
     e.textContent = text;
     if (tag === "textarea") e.value = text;
   }
+  const cls = [TAG_CLASS[tag] || "", attrs.className ?? attrs.class ?? ""].filter(Boolean).join(" ");
+  if (cls) {
+    e.className = cls;
+    e.setAttribute("class", cls);
+  }
   for (const k in attrs) {
+    if (k === "className" || k === "class") continue;
     e.setAttribute(k, attrs[k]);
-    if (k === "value") e.value = attrs[k];
+    if (k === "value" || k === "id") e[k] = attrs[k];
+    if (k === "checked") e.checked = Boolean(attrs[k] || attrs[k] === "");
+    if (k === "open") e.open = Boolean(attrs[k] || attrs[k] === "");
   }
   return e;
 };
 const api = () => globalThis.__MARINARA_HOST__.api.api;
 let pickerSeq = 0;
 
+const clampInt = (v, lo, hi, d) =>
+  typeof v !== "boolean" && v !== null && v !== undefined && v !== "" && Number.isFinite(Math.round(Number(v)))
+    ? Math.min(hi, Math.max(lo, Math.round(Number(v))))
+    : d;
+
+const normalizeSettings = (raw) => {
+  const s = raw && typeof raw === "object" ? raw : {};
+  return {
+    twists: ["none", "rare", "free"].includes(s.twists) ? s.twists : "rare",
+    presetName: typeof s.presetName === "string" ? s.presetName.trim().slice(0, 200) : "",
+    presetText: typeof s.presetText === "string" ? s.presetText.trim().slice(0, 6000) : "",
+    intro: typeof s.intro === "string" ? s.intro.trim().slice(0, 4000) : "",
+    checker: s.checker !== false,
+    minScore: clampInt(s.minScore, 1, 10, 7),
+    maxRetries: clampInt(s.maxRetries, 0, 3, 2),
+  };
+};
+
 class StoryWriterElement extends HTMLElement {
   static connections(rows) {
     return (Array.isArray(rows) ? rows : []).filter((r) => r && r.provider !== "decision");
   }
-  // Character rows keep the card as a JSON string or object in `data`.
-  static characterName(row) {
-    try {
-      return (typeof row?.data === "string" ? JSON.parse(row.data) : row?.data)?.name || row?.name || row?.id || "";
-    } catch {
-      return row?.name || row?.id || "";
+  // Character rows keep the card as a JSON string or object in `data`, and V2 cards may nest `.data`.
+  static unwrapCharacter(row) {
+    let d = row?.data;
+    if (typeof d === "string") {
+      try {
+        d = JSON.parse(d);
+      } catch {
+        d = null;
+      }
     }
+    const inner = d && typeof d.data === "object" && d.data !== null ? d.data : null;
+    return {
+      name: inner?.name || d?.name || row?.name || row?.id || "",
+      first_mes: inner?.first_mes ?? d?.first_mes ?? row?.first_mes ?? "",
+      alternate_greetings: inner?.alternate_greetings ?? d?.alternate_greetings ?? row?.alternate_greetings ?? [],
+    };
+  }
+  static characterName(row) {
+    return StoryWriterElement.unwrapCharacter(row).name;
+  }
+  static greetings(row) {
+    const c = StoryWriterElement.unwrapCharacter(row);
+    const name = c.name || "Character";
+    const out = [];
+    if (typeof c.first_mes === "string" && c.first_mes.trim()) {
+      out.push({ label: `${name} — first message`, text: c.first_mes.slice(0, 4000) });
+    }
+    const alts = Array.isArray(c.alternate_greetings) ? c.alternate_greetings : [];
+    for (let i = 0; i < alts.length; i++) {
+      const g = alts[i];
+      if (typeof g === "string" && g.trim()) {
+        out.push({ label: `${name} — alternate ${i + 1}`, text: g.slice(0, 4000) });
+      }
+    }
+    return out;
+  }
+  static presetText(full) {
+    const sections = Array.isArray(full) ? full : Array.isArray(full?.sections) ? full.sections : [];
+    return sections
+      .filter((s) => s?.enabled && !s.isMarker && s.content && String(s.content).trim())
+      .map((s) => String(s.content).trim())
+      .join("\n\n");
   }
   static phaseLabel(phase) {
     return PHASES[phase] ?? "Writing";
@@ -131,11 +231,60 @@ class StoryWriterElement extends HTMLElement {
       atLimit: false,
     };
   }
-  static picker({ label, path, nameOf = (r) => r?.name || r?.id || "", max = 20, sort = "" } = {}) {
+  static authorFields(initial = {}) {
+    const init = normalizeSettings(initial);
+    const twists = h("select");
+    for (const [val, label] of TWISTS) twists.append(h("option", label, { value: val }));
+    twists.value = init.twists;
+    const twistHint = h("p", "Rare = the author only follows the premise and cards, no invented twists", {
+      className: "sw-muted",
+    });
+
+    const checker = h("input", null, init.checker ? { type: "checkbox", checked: "checked" } : { type: "checkbox" });
+    checker.checked = init.checker;
+    const checkerLabel = h("label", null);
+    checkerLabel.append(checker, h("span", "Check chapters for out-of-character writing and rewrite"));
+
+    const minScore = h("input", null, {
+      type: "number",
+      min: "1",
+      max: "10",
+      value: String(init.minScore),
+    });
+    const maxRetries = h("input", null, {
+      type: "number",
+      min: "0",
+      max: "3",
+      value: String(init.maxRetries),
+    });
+
+    return {
+      nodes: [
+        h("label", "Twists"),
+        twists,
+        twistHint,
+        checkerLabel,
+        h("label", "Minimum score (1-10)"),
+        minScore,
+        h("label", "Max rewrites (0-3)"),
+        maxRetries,
+      ],
+      value: () => ({
+        twists: TWISTS.some(([v]) => v === twists.value) ? twists.value : "rare",
+        checker: Boolean(checker.checked),
+        minScore: clampInt(minScore.value, 1, 10, 7),
+        maxRetries: clampInt(maxRetries.value, 0, 3, 2),
+      }),
+    };
+  }
+  static picker({ label, path, nameOf = (r) => r?.name || r?.id || "", max = 20, sort = "", onChange = null } = {}) {
     const text = /^(characters|lorebooks)$/i.test(label) ? `Search ${label.toLowerCase()}` : label || "Search";
     const hideOnFail = path === "/lorebooks";
     const inputId = `sw-picker-${++pickerSeq}`;
-    const wrap = h("div", null, { style: hideOnFail ? "display:none" : "display:grid;gap:6px" });
+    const wrap = h("div", null, {
+      className: "sw-picker",
+      style: hideOnFail ? "display:none" : "display:grid;gap:6px",
+    });
     wrap.hidden = hideOnFail;
 
     let selected = [];
@@ -148,24 +297,25 @@ class StoryWriterElement extends HTMLElement {
     let timer = null;
 
     const labelEl = h("label", text, { for: inputId });
-    const chipsBox = h("div", null, { style: "display:flex;gap:6px;flex-wrap:wrap" });
-    const countEl = h("span", `0 of ${max} selected`, { style: "opacity:0.7" });
+    const chipsBox = h("div", null, { className: "sw-chips", style: "display:flex;gap:6px;flex-wrap:wrap" });
+    const countEl = h("span", `0 of ${max} selected`, { className: "sw-muted", style: "opacity:0.7" });
     const input = h("input", null, { type: "search", id: inputId, "aria-label": text, value: "", placeholder: text });
-    const statusEl = h("p", "");
-    const resultsBox = h("div", null, { style: "display:grid;gap:4px" });
+    const statusEl = h("p", "", { className: "sw-muted" });
+    const resultsBox = h("div", null, { className: "sw-results", style: "display:grid;gap:4px" });
     const moreBox = h("div");
-    const moreBtn = h("button", "Load more", { type: "button" });
+    const moreBtn = h("button", "Load more", { type: "button", className: "sw-btn-ghost" });
 
     const renderChips = () => {
       countEl.textContent = `${selected.length} of ${max} selected`;
       const chips = selected.map((item) => {
-        const chip = h("span", null, { style: "display:inline-flex;gap:4px;align-items:center" });
-        const rm = h("button", "×", { type: "button", "aria-label": `Remove ${item.name}` });
+        const chip = h("span", null, { className: "sw-chip", style: "display:inline-flex;gap:4px;align-items:center" });
+        const rm = h("button", "×", { type: "button", className: "sw-btn-ghost", "aria-label": `Remove ${item.name}` });
         rm.addEventListener("click", () => {
           selected = selected.filter((s) => s.id !== item.id);
           if (statusEl.textContent === `Limit of ${max} reached.`) statusEl.textContent = "";
           renderChips();
           renderResults();
+          onChange?.(selected.map((s) => s.id));
         });
         chip.append(h("span", item.name), rm);
         return chip;
@@ -190,6 +340,7 @@ class StoryWriterElement extends HTMLElement {
           selected = res.selected;
           renderChips();
           renderResults();
+          onChange?.(selected.map((s) => s.id));
         });
         return btn;
       });
@@ -243,6 +394,17 @@ class StoryWriterElement extends HTMLElement {
     };
   }
 
+  ensureStyle() {
+    const existing = Array.from(this.children ?? []).find((c) => (c.id || c.attrs?.id) === STYLE_ID);
+    if (existing) return existing;
+    this.styleEl ||= h("style", CSS, { id: STYLE_ID });
+    return this.styleEl;
+  }
+
+  setView(...nodes) {
+    this.replaceChildren(this.ensureStyle(), ...nodes);
+  }
+
   connectedCallback() {
     this.load();
   }
@@ -275,14 +437,14 @@ class StoryWriterElement extends HTMLElement {
     this.stopPolling();
     this.clearTimers();
     this.currentStory = null;
-    this.replaceChildren(h("p", "Loading stories…"));
+    this.setView(h("p", "Loading stories…", { className: "sw-muted" }));
     try {
       const stories = await api().get("/story-writer/stories");
       this.renderShelf(Array.isArray(stories) ? stories : []);
     } catch (error) {
       const retry = h("button", "Retry", { type: "button" });
       retry.addEventListener("click", () => this.load());
-      this.replaceChildren(h("p", `Could not load stories: ${error?.message ?? error}`), retry);
+      this.setView(h("p", `Could not load stories: ${error?.message ?? error}`), retry);
     }
   }
 
@@ -291,31 +453,37 @@ class StoryWriterElement extends HTMLElement {
   }
 
   renderShelf(stories = []) {
-    const root = h("div", null, { style: "padding:24px;display:grid;gap:12px;max-width:720px" });
-    const head = h("div", null, { style: "display:flex;gap:12px;align-items:center;justify-content:space-between" });
-    const newBtn = h("button", "New story", { type: "button" });
+    const root = h("div", null, { className: "sw-root", style: "padding:24px;display:grid;gap:12px;max-width:720px" });
+    const head = h("div", null, {
+      className: "sw-head sw-head-between",
+      style: "display:flex;gap:12px;align-items:center;justify-content:space-between",
+    });
+    const newBtn = h("button", "New story", { type: "button", className: "sw-btn-primary" });
     newBtn.addEventListener("click", () => this.openNewStoryForm());
     head.append(h("h2", "Story Writer"), newBtn);
     root.append(head);
 
     const list = Array.isArray(stories) ? stories : [];
     if (!list.length) {
-      root.append(h("p", "No stories yet."));
+      root.append(h("p", "No stories yet.", { className: "sw-muted" }));
     }
     for (const s of list) {
-      const row = h("div", null, { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:6px 0" });
+      const row = h("div", null, {
+        className: "sw-card sw-bar",
+        style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:6px 0",
+      });
       const when = s.lastChapterAt ?? s.createdAt ?? s.updatedAt;
       row.append(
         h("strong", s.title || s.name || "Untitled"),
-        h("span", `${s.chapterCount ?? 0} chapters`, { style: "opacity:0.7" }),
-        h("span", when ? new Date(when).toLocaleString() : "", { style: "opacity:0.7" }),
+        h("span", `${s.chapterCount ?? 0} chapters`, { className: "sw-muted", style: "opacity:0.7" }),
+        h("span", when ? new Date(when).toLocaleString() : "", { className: "sw-muted", style: "opacity:0.7" }),
       );
       const open = h("button", "Open", { type: "button" });
       open.addEventListener("click", () => this.openStory(s.id));
       row.append(open);
       root.append(row);
     }
-    this.replaceChildren(root);
+    this.setView(root);
   }
 
   async openNewStoryForm() {
@@ -330,14 +498,14 @@ class StoryWriterElement extends HTMLElement {
   }
 
   renderNewStoryForm({ connections = [] } = {}) {
-    const root = h("div", null, { style: "padding:24px;display:grid;gap:12px;max-width:560px" });
-    const back = h("button", "Back", { type: "button" });
+    const root = h("div", null, { className: "sw-root", style: "padding:24px;display:grid;gap:12px;max-width:560px" });
+    const back = h("button", "Back", { type: "button", className: "sw-btn-ghost" });
     back.addEventListener("click", () => this.load());
-    const head = h("div", null, { style: "display:flex;gap:12px;align-items:center" });
+    const head = h("div", null, { className: "sw-head", style: "display:flex;gap:12px;align-items:center" });
     head.append(back, h("h2", "New story"));
     root.append(head);
 
-    const form = h("form", null, { style: "display:grid;gap:8px" });
+    const form = h("form", null, { className: "sw-form", style: "display:grid;gap:8px" });
     const title = h("input", null, { type: "text", required: "", maxlength: "200", value: "", placeholder: "Story title" });
     const premise = h("textarea", "", { rows: "4", maxlength: "2000", placeholder: "Premise (optional)" });
     const conn = h("select");
@@ -347,12 +515,69 @@ class StoryWriterElement extends HTMLElement {
     }
     conn.value = "";
 
+    // Opening & character greetings (fetched lazily when characters are picked).
+    const introInput = h("textarea", "", { rows: "4", maxlength: "4000", placeholder: "Opening (optional)" });
+    const startWrap = h("div", null, { className: "sw-stack", style: "display:none" });
+    startWrap.hidden = true;
+    const startSelect = h("select");
+    startWrap.append(h("label", "Start from…"), startSelect);
+    const charGreetings = new Map();
+    let greetingItems = [];
+
+    const rebuildStartOptions = (ids) => {
+      if (!ids.length) {
+        startWrap.hidden = true;
+        startWrap.setAttribute("style", "display:none");
+        startSelect.replaceChildren();
+        greetingItems = [];
+        return;
+      }
+      startWrap.hidden = false;
+      startWrap.setAttribute("style", "display:grid;gap:6px");
+      greetingItems = [];
+      const opts = [h("option", "Nothing", { value: "" })];
+      for (const id of ids) {
+        for (const g of charGreetings.get(id) ?? []) {
+          const idx = String(greetingItems.length);
+          greetingItems.push(g);
+          opts.push(h("option", g.label, { value: idx }));
+        }
+      }
+      startSelect.replaceChildren(...opts);
+      startSelect.value = "";
+    };
+
+    startSelect.addEventListener("change", () => {
+      const idx = startSelect.value === "" ? -1 : Number(startSelect.value);
+      if (idx >= 0 && greetingItems[idx]) {
+        const capped = greetingItems[idx].text.slice(0, 4000);
+        introInput.value = capped;
+        introInput.textContent = capped;
+      }
+    });
+
+    const onCharsChange = (ids) => {
+      rebuildStartOptions(ids);
+      for (const id of ids) {
+        if (charGreetings.has(id)) continue;
+        charGreetings.set(id, []);
+        api()
+          .get(`/characters/${id}`)
+          .then((row) => {
+            charGreetings.set(id, StoryWriterElement.greetings(row));
+            rebuildStartOptions(charPicker.value());
+          })
+          .catch(() => {});
+      }
+    };
+
     const charPicker = StoryWriterElement.picker({
       label: "Search characters",
       path: "/characters",
       nameOf: StoryWriterElement.characterName,
       max: 20,
       sort: "name-asc",
+      onChange: onCharsChange,
     });
     const lorePicker = StoryWriterElement.picker({
       label: "Search lorebooks",
@@ -361,9 +586,70 @@ class StoryWriterElement extends HTMLElement {
       max: 20,
     });
 
+    // Prompt preset selector (hidden if GET /prompts fails).
+    let presetName = "";
+    let presetText = "";
+    const presetNames = new Map();
+    const presetWrap = h("div", null, { className: "sw-stack", style: "display:grid;gap:6px" });
+    const presetSelect = h("select");
+    presetSelect.append(h("option", "No preset", { value: "" }));
+    const presetHint = h("p", "", { className: "sw-muted" });
+    presetWrap.append(h("label", "Prompt preset"), presetSelect, presetHint);
+
+    api()
+      .get("/prompts")
+      .then((rows) => {
+        if (!Array.isArray(rows)) throw new Error("Invalid prompts");
+        for (const p of rows) {
+          if (!p?.id) continue;
+          const nm = p.name || p.id;
+          presetNames.set(p.id, nm);
+          presetSelect.append(h("option", nm, { value: p.id }));
+        }
+      })
+      .catch(() => {
+        presetWrap.hidden = true;
+        presetWrap.setAttribute("style", "display:none");
+        presetWrap.replaceChildren();
+      });
+
+    presetSelect.addEventListener("change", async () => {
+      const id = presetSelect.value;
+      if (!id) {
+        presetName = "";
+        presetText = "";
+        presetHint.textContent = "";
+        return;
+      }
+      try {
+        const full = await api().get(`/prompts/${id}/full`);
+        presetText = StoryWriterElement.presetText(full);
+        presetName = full?.preset?.name || presetNames.get(id) || "";
+        presetHint.textContent = presetText.length
+          ? `${presetText.length} characters`
+          : "This preset has no plain-text sections";
+      } catch (error) {
+        presetName = "";
+        presetText = "";
+        presetHint.textContent = error?.message ?? String(error);
+      }
+    });
+
+    const author = StoryWriterElement.authorFields();
+    const advanced = h("details", null, { className: "sw-advanced", open: "" });
+    advanced.open = true;
+    advanced.append(
+      h("summary", "Author controls"),
+      presetWrap,
+      h("label", "Opening (optional)"),
+      introInput,
+      startWrap,
+      ...author.nodes,
+    );
+
     const style = StoryWriterElement.styleFields({ chapterWords: 2500, pointOfView: POVS[0], tense: "past" });
-    const status = h("p", "");
-    const submit = h("button", "Create story", { type: "submit" });
+    const status = h("p", "", { className: "sw-muted" });
+    const submit = h("button", "Create story", { type: "submit", className: "sw-btn-primary" });
 
     form.append(
       h("label", "Title"),
@@ -374,6 +660,7 @@ class StoryWriterElement extends HTMLElement {
       conn,
       ...charPicker.nodes,
       ...lorePicker.nodes,
+      advanced,
       ...style.nodes,
       submit,
       status,
@@ -393,6 +680,12 @@ class StoryWriterElement extends HTMLElement {
       submit.disabled = true;
       status.textContent = "Creating…";
       try {
+        const settings = normalizeSettings({
+          ...author.value(),
+          presetName,
+          presetText,
+          intro: (introInput.value ?? "").slice(0, 4000),
+        });
         const res = await api().post("/story-writer/stories", {
           title: cleanTitle,
           premise: cleanPremise,
@@ -400,6 +693,7 @@ class StoryWriterElement extends HTMLElement {
           lorebookIds,
           connectionId: conn.value || null,
           style: style.value(),
+          settings,
         });
         const notice = res?.planError
           ? `Story created, but the plan could not be generated: ${res.planError}. Open Plan and press Regenerate.`
@@ -412,7 +706,7 @@ class StoryWriterElement extends HTMLElement {
     });
 
     root.append(form);
-    this.replaceChildren(root);
+    this.setView(root);
   }
 
   async openStory(id, notice = "") {
@@ -429,20 +723,20 @@ class StoryWriterElement extends HTMLElement {
       const story = await api().get(StoryWriterElement.storyPath(id));
       this.renderReader(story);
     } catch (error) {
-      const back = h("button", "Back", { type: "button" });
+      const back = h("button", "Back", { type: "button", className: "sw-btn-ghost" });
       back.addEventListener("click", () => this.load());
-      this.replaceChildren(h("p", `Could not load story: ${error?.message ?? error}`), back);
+      this.setView(h("p", `Could not load story: ${error?.message ?? error}`), back);
     }
   }
 
   planPanel(story) {
-    const box = h("div", null, { style: "padding:12px;display:grid;gap:8px;max-width:560px" });
+    const box = h("div", null, { className: "sw-panel", style: "padding:12px;display:grid;gap:8px;max-width:560px" });
     const url = StoryWriterElement.storyPath(story.id, "/plan");
     let state = { plan: null, revision: null };
     let shown = false;
     let armed = false;
     let conflict = false;
-    const msg = h("p", "");
+    const msg = h("p", "", { className: "sw-muted" });
 
     const clearRegen = () => {
       armed = false;
@@ -479,17 +773,22 @@ class StoryWriterElement extends HTMLElement {
         style: { chapterWords: 2500, pointOfView: POVS[0], tense: "past" },
       };
       const kids = [];
-      const style = StoryWriterElement.styleFields(plan.style);
-      kids.push(...style.nodes);
-
-      if (!shown) {
-        kids.push(h("p", "Spoilers hidden"));
-      }
-      const reveal = h("button", shown ? "Hide spoilers" : "Reveal spoilers", { type: "button" });
+      const reveal = h("button", shown ? "Hide spoilers" : "Reveal spoilers", {
+        type: "button",
+        className: "sw-btn-ghost",
+      });
       reveal.addEventListener("click", () => {
         shown = !shown;
         draw();
       });
+      kids.push(reveal);
+
+      const style = StoryWriterElement.styleFields(plan.style);
+      kids.push(...style.nodes);
+
+      if (!shown) {
+        kids.push(h("p", "Spoilers hidden", { className: "sw-muted" }));
+      }
 
       const fields = {};
       if (shown) {
@@ -503,7 +802,7 @@ class StoryWriterElement extends HTMLElement {
         kids.push(h("label", "Next beat"), fields.beat);
       }
 
-      const save = h("button", "Save", { type: "button" });
+      const save = h("button", "Save", { type: "button", className: "sw-btn-primary" });
       save.addEventListener("click", async () => {
         const next = { ...plan, style: style.value() };
         if (shown) {
@@ -534,9 +833,11 @@ class StoryWriterElement extends HTMLElement {
         if (!armed) {
           armed = true;
           regen.textContent = "Confirm regenerate";
+          regen.className = "sw-btn sw-btn-destructive";
           this.regenTimer = setTimeout(() => {
             armed = false;
             regen.textContent = "Regenerate";
+            regen.className = "sw-btn";
           }, 4000);
           return;
         }
@@ -555,8 +856,8 @@ class StoryWriterElement extends HTMLElement {
         }
       });
 
-      const bar = h("div", null, { style: "display:flex;gap:8px;flex-wrap:wrap" });
-      bar.append(reveal, save, regen);
+      const bar = h("div", null, { className: "sw-bar", style: "display:flex;gap:8px;flex-wrap:wrap" });
+      bar.append(save, regen);
       if (conflict) {
         const reload = h("button", "Reload", { type: "button" });
         reload.addEventListener("click", () => {
@@ -570,6 +871,56 @@ class StoryWriterElement extends HTMLElement {
 
     loadPlan();
     return box;
+  }
+
+  settingsPanel(story) {
+    let cur = normalizeSettings(story?.settings);
+    const details = h("details", null, { className: "sw-settings" });
+    details.open = false;
+    const author = StoryWriterElement.authorFields(cur);
+    const presetLabel = h("label", "Prompt preset");
+    const presetValue = h("p", cur.presetName || "No preset", { className: "sw-muted" });
+    const styleGuide = h("textarea", cur.presetText, { rows: "4" });
+    const chapters = Array.isArray(story?.chapters) ? story.chapters : [];
+    const chapterCount = story?.chapterCount ?? chapters.length;
+    const showIntro = chapterCount === 0;
+    const introArea = h("textarea", cur.intro, { rows: "4", maxlength: "4000" });
+    const saveBtn = h("button", "Save", { type: "button", className: "sw-btn-primary" });
+    const msg = h("p", "", { className: "sw-muted" });
+
+    saveBtn.addEventListener("click", async () => {
+      const next = normalizeSettings({
+        ...cur,
+        ...author.value(),
+        presetName: cur.presetName,
+        presetText: styleGuide.value ?? "",
+        intro: showIntro ? (introArea.value ?? "").slice(0, 4000) : cur.intro,
+      });
+      saveBtn.disabled = true;
+      msg.textContent = "";
+      try {
+        const res = await api().put(StoryWriterElement.storyPath(story.id, "/settings"), next);
+        cur = normalizeSettings(res?.settings ?? next);
+        if (story && typeof story === "object") story.settings = cur;
+        msg.textContent = "Saved";
+      } catch (error) {
+        msg.textContent = error?.message ?? String(error);
+      }
+      saveBtn.disabled = false;
+    });
+
+    details.append(
+      h("summary", "Author controls"),
+      ...author.nodes,
+      presetLabel,
+      presetValue,
+      h("label", "Style guide"),
+      styleGuide,
+      ...(showIntro ? [h("label", "Opening (optional)"), introArea] : []),
+      saveBtn,
+      msg,
+    );
+    return details;
   }
 
   startPolling(storyId, jobId) {
@@ -625,17 +976,20 @@ class StoryWriterElement extends HTMLElement {
     this.jobText = null;
 
     const isRunning = Boolean(this.activeJob && this.activeJob.storyId === story.id && this.activeJob.status === "running");
-    const root = h("div", null, { style: "padding:24px;display:grid;gap:12px;max-width:720px" });
+    const root = h("div", null, { className: "sw-root", style: "padding:24px;display:grid;gap:12px;max-width:720px" });
 
-    const head = h("div", null, { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
-    const back = h("button", "Back to shelf", { type: "button" });
+    const head = h("div", null, { className: "sw-head", style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+    const back = h("button", "Back to shelf", { type: "button", className: "sw-btn-ghost" });
     back.addEventListener("click", () => this.load());
     head.append(back, h("h2", story.title || "Untitled"));
     root.append(head);
 
     if (this.readerNotice) {
-      const noticeBox = h("div", null, { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
-      const dismiss = h("button", "Dismiss", { type: "button" });
+      const noticeBox = h("div", null, {
+        className: "sw-card sw-bar",
+        style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap",
+      });
+      const dismiss = h("button", "Dismiss", { type: "button", className: "sw-btn-ghost" });
       dismiss.addEventListener("click", () => {
         this.readerNotice = "";
         noticeBox.replaceChildren();
@@ -644,12 +998,12 @@ class StoryWriterElement extends HTMLElement {
       root.append(noticeBox);
     }
 
-    const statusMsg = h("p", this.jobError || "");
+    const statusMsg = h("p", this.jobError || "", { className: "sw-muted" });
 
-    const controls = h("div", null, { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+    const controls = h("div", null, { className: "sw-bar", style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
     const nudgeLabel = h("label", "Nudge for the next chapter (optional)");
     const nudgeInput = h("input", null, { type: "text", value: "", placeholder: "Optional nudge" });
-    const writeOne = h("button", "Write next chapter", { type: "button" });
+    const writeOne = h("button", "Write next chapter", { type: "button", className: "sw-btn-primary" });
     writeOne.disabled = isRunning;
 
     const autoLabel = h("label", "Autopilot");
@@ -714,7 +1068,7 @@ class StoryWriterElement extends HTMLElement {
     });
 
     let delArmed = false;
-    const delBtn = h("button", "Delete story", { type: "button" });
+    const delBtn = h("button", "Delete story", { type: "button", className: "sw-btn-destructive" });
     delBtn.addEventListener("click", async () => {
       if (!delArmed) {
         delArmed = true;
@@ -743,12 +1097,12 @@ class StoryWriterElement extends HTMLElement {
     });
 
     controls.append(nudgeLabel, nudgeInput, writeOne, autoLabel, autoInput, writeMany, planBtn, epubBtn, delBtn);
-    root.append(controls, statusMsg);
+    root.append(controls, this.settingsPanel(story), statusMsg);
 
     if (isRunning) {
       const job = this.activeJob;
-      const jobBox = h("div", null, { style: "display:flex;gap:8px;align-items:center" });
-      const cancelBtn = h("button", "Cancel", { type: "button" });
+      const jobBox = h("div", null, { className: "sw-bar", style: "display:flex;gap:8px;align-items:center" });
+      const cancelBtn = h("button", "Cancel", { type: "button", className: "sw-btn-ghost" });
       cancelBtn.addEventListener("click", async () => {
         cancelBtn.disabled = true;
         try {
@@ -767,24 +1121,24 @@ class StoryWriterElement extends HTMLElement {
     root.append(planSlot);
 
     // Chapter list: only title, blurb, and wordCount are ever read or rendered.
-    const listBox = h("div", null, { style: "display:grid;gap:8px" });
+    const listBox = h("div", null, { className: "sw-chapters", style: "display:grid;gap:8px" });
     const chapters = Array.isArray(story.chapters) ? story.chapters : [];
     if (!chapters.length) {
-      listBox.append(h("p", "No chapters yet.", { style: "opacity:0.7" }));
+      listBox.append(h("p", "No chapters yet.", { className: "sw-muted", style: "opacity:0.7" }));
     }
     for (const ch of chapters) {
-      const item = h("div", null, { style: "padding:8px 0;display:grid;gap:4px" });
-      const top = h("div", null, { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" });
+      const item = h("div", null, { className: "sw-chapter", style: "padding:8px 0;display:grid;gap:4px" });
+      const top = h("div", null, { className: "sw-bar", style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" });
       top.append(
         h("strong", `Chapter ${ch.n}: ${ch.title || `Chapter ${ch.n}`}`),
-        h("span", `${ch.wordCount ?? 0} words`, { style: "opacity:0.7" }),
+        h("span", `${ch.wordCount ?? 0} words`, { className: "sw-muted", style: "opacity:0.7" }),
       );
       const readBtn = h("button", "Read", { type: "button" });
       readBtn.addEventListener("click", () => this.openChapter(story.id, ch.n));
       top.append(readBtn);
       item.append(top);
       if (ch.blurb) {
-        item.append(h("p", ch.blurb, { style: "opacity:0.7;margin:0" }));
+        item.append(h("p", ch.blurb, { className: "sw-muted", style: "opacity:0.7;margin:0" }));
       }
       listBox.append(item);
     }
@@ -793,13 +1147,14 @@ class StoryWriterElement extends HTMLElement {
     if (this.readingChapter) {
       const ch = this.readingChapter;
       const pane = h("div", null, {
-        style: "margin-top:16px;padding:16px;max-width:65ch;line-height:1.6;display:grid;gap:12px",
+        className: "sw-reader-pane",
+        style: "margin-top:16px;padding:16px;max-width:70ch;line-height:1.7;display:grid;gap:12px",
       });
       pane.append(h("h3", `Chapter ${ch.n}: ${ch.title || `Chapter ${ch.n}`}`));
       for (const p of StoryWriterElement.splitParagraphs(ch.text)) {
         pane.append(h("p", p, { style: "margin:0" }));
       }
-      const nav = h("div", null, { style: "display:flex;gap:8px" });
+      const nav = h("div", null, { className: "sw-bar", style: "display:flex;gap:8px" });
       const prev = h("button", "Previous chapter", { type: "button" });
       prev.disabled = ch.n <= 1;
       prev.addEventListener("click", () => {
@@ -811,7 +1166,7 @@ class StoryWriterElement extends HTMLElement {
       next.addEventListener("click", () => {
         if (ch.n < totalCh) this.openChapter(story.id, ch.n + 1);
       });
-      const close = h("button", "Close", { type: "button" });
+      const close = h("button", "Close", { type: "button", className: "sw-btn-ghost" });
       close.addEventListener("click", () => {
         this.readingChapter = null;
         this.renderReader(this.currentStory);
@@ -821,7 +1176,7 @@ class StoryWriterElement extends HTMLElement {
       root.append(pane);
     }
 
-    this.replaceChildren(root);
+    this.setView(root);
   }
 }
 

@@ -10,7 +10,7 @@
   },
   "id": "story-writer",
   "name": "Story Writer",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer.",
   "engine": {
     "min": "2.5.0",
@@ -47,8 +47,8 @@
     },
     {
       "path": "client.js",
-      "sha256": "8486dec70565b7572ca495497d3582be9d188c0571dcad1e8097efc1b5d76d58",
-      "bytes": 25789
+      "sha256": "97a5cd34fd738ddbd0fb1b0f778b21abfa5d51efa3a5381413a818ecc8c72899",
+      "bytes": 45328
     },
     {
       "path": "epub.mjs",
@@ -57,18 +57,18 @@
     },
     {
       "path": "plan.mjs",
-      "sha256": "a5f09d56a9cfe5714d209f89c5a0f3a01820b2d708775ddf2a6f5ff137f043fe",
-      "bytes": 3097
+      "sha256": "0e58fb1e3e063d1aa1f65c25a8892f74de843f5402ce6a39365ad5d268845487",
+      "bytes": 3836
     },
     {
       "path": "server.mjs",
-      "sha256": "275feee1caeb6fdb069dc547e2b50fd51c979f781a6b8aca6f04db4eeadfe1ff",
-      "bytes": 12595
+      "sha256": "d494197068820646c2ca92ca8d33afda5bd0ff3b0385d9f8d405a6284f1afb60",
+      "bytes": 14624
     },
     {
       "path": "pipeline.mjs",
-      "sha256": "cb882907425f5ac1b6168f3bdee79eedf54f42edf5494cf261be7b1870557279",
-      "bytes": 18841
+      "sha256": "fb8c7c8fc8481f7762b24941baf967489fcc9d9cc364cacba93242f0120b714b",
+      "bytes": 21757
     }
   ]
 }
