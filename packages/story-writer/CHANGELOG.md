@@ -1,3 +1,6 @@
+## 0.9.0 — 2026-10-22
+- Added: Agents in Author controls. Pick installed agents to run after every chapter, up to five. Checkers such as Continuity Checker, Prose Guardian and Fanfic Writer rewrite the chapter when they find problems. Trackers such as Character Tracker and World State keep notes that the author reads before the next chapter. Fanfic Writer replaces the built-in out-of-character check when you pick it. Each agent adds one model call per chapter.
+
 ## 0.8.0 — 2026-10-22
 - Added: Story Writer now looks like the rest of the app and follows your theme. The Hide spoilers button sits above the spoilers.
 - Added: Author controls on the New story form and in the reader: pick one of your prompt presets as a style guide, start from a character's first message or an alternate greeting, choose how many twists the author may add (None, Rare or Free, Rare by default), and turn the out-of-character check on or off with its score and rewrite limits. Presets are used as story style guides, with {{char}} and {{user}} filled in.

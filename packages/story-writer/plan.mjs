@@ -22,6 +22,13 @@ export function normalizeStyle(raw) {
   };
 }
 
+// Snapshots of installed Engine agents (their prompt text), run after each chapter. "rewrite" returns edited text, "tracker" keeps notes.
+const agents = (v) =>
+  (Array.isArray(v) ? v : [])
+    .map((a) => ({ type: str(a?.type, 100), name: str(a?.name, 100), kind: a?.kind === "tracker" ? "tracker" : "rewrite", prompt: str(a?.prompt, 12000), minScore: Math.min(10, Math.max(1, Math.round(Number(a?.minScore)) || 7)) }))
+    .filter((a) => a.type && a.prompt)
+    .slice(0, 5);
+
 export const TWIST_LEVELS = ["none", "rare", "free"];
 
 // Per-story author controls, editable between chapters. Lenient on purpose: bad values fall back to defaults.
@@ -36,6 +43,7 @@ export function normalizeSettings(raw) {
     checker: s.checker !== false,
     minScore: clamp(s.minScore, 1, 10, 7),
     maxRetries: clamp(s.maxRetries, 0, 3, 2),
+    agents: agents(s.agents),
   };
 }
 

@@ -329,6 +329,7 @@ assert.deepEqual(formCalls, [
   "/characters?search=&limit=20&offset=0&sort=name-asc",
   "/lorebooks?search=&limit=20&offset=0",
   "/prompts",
+  "/agents",
 ]);
 
 const formNodes = all(el);
@@ -372,9 +373,253 @@ assert.deepEqual(postedStory?.settings, {
   checker: true,
   minScore: 7,
   maxRetries: 2,
+  agents: [],
 });
 const stylesAfter = all(el).filter((n) => n.tag === "style");
 assert.equal(stylesAfter.length, 1);
 assert.equal(stylesAfter[0], initialStyle[0]);
+
+// (8) Installed-agent picker: agentKind, snapshot shape, fanfic-writer hint, max-5 cap, hide on failed fetch, POST/PUT settings.agents
+assert.equal(S.agentKind({ phase: "post_processing", settings: { resultType: "text_rewrite" } }), "rewrite");
+for (const trackerType of [
+  "character-tracker",
+  "world-state",
+  "quest",
+  "persona-stats",
+  "relationship-tracker",
+  "custom-tracker",
+  "inventory-tracker",
+]) {
+  assert.equal(S.agentKind({ type: trackerType, phase: "output_generation" }), "tracker");
+}
+assert.equal(S.agentKind({ type: "other", phase: "post_processing", settings: { resultType: "json" } }), null);
+assert.equal(S.agentKind({ type: "other", phase: "pre_processing", settings: { resultType: "text_rewrite" } }), null);
+assert.equal(S.agentKind(null), null);
+
+// Two eligible agents + one non-eligible agent
+const twoAgentsPayload = [
+  {
+    id: "ag:1",
+    type: "fanfic-writer",
+    name: "Fanfic Writer",
+    description: "Fixes out-of-character lines",
+    phase: "post_processing",
+    promptTemplate: "Rewrite OOC dialogue.",
+    settings: { resultType: "text_rewrite", minScore: 8 },
+  },
+  {
+    id: "ag:2",
+    type: "character-tracker",
+    name: "Character Tracker",
+    description: "Tracks character state",
+    phase: "output_generation",
+    promptTemplate: "Record character notes.",
+    settings: {},
+  },
+  {
+    id: "ag:3",
+    type: "ignored-helper",
+    name: "Ignored Helper",
+    description: "Should not appear",
+    phase: "pre_processing",
+    promptTemplate: "Unused.",
+    settings: {},
+  },
+];
+
+globalThis.__MARINARA_HOST__ = {
+  api: {
+    api: {
+      async get(path) {
+        if (path === "/agents") return twoAgentsPayload;
+        throw new Error(`Unexpected GET ${path}`);
+      },
+    },
+  },
+};
+
+const picker = S.agentPicker();
+await new Promise((r) => setTimeout(r, 0));
+const pickerBoxes = all(picker.nodes[0]).filter((n) => n.tag === "input" && n.attrs.type === "checkbox");
+assert.equal(pickerBoxes.length, 2);
+const pickerDump = treeText(picker.nodes[0]);
+assert.ok(pickerDump.includes("Agents run after each chapter"));
+assert.ok(pickerDump.includes("Fanfic Writer"));
+assert.ok(pickerDump.includes("Fixes out-of-character lines"));
+assert.ok(pickerDump.includes("rewrites the chapter"));
+assert.ok(pickerDump.includes("Character Tracker"));
+assert.ok(pickerDump.includes("Tracks character state"));
+assert.ok(pickerDump.includes("keeps notes for the next chapter"));
+assert.ok(!pickerDump.includes("Ignored Helper"));
+assert.ok(!pickerDump.includes("Replaces the built-in out-of-character check"));
+
+pickerBoxes[0].checked = true;
+pickerBoxes[0].listeners.change();
+assert.ok(treeText(picker.nodes[0]).includes("Replaces the built-in out-of-character check"));
+
+pickerBoxes[1].checked = true;
+pickerBoxes[1].listeners.change();
+assert.deepEqual(picker.value(), [
+  {
+    type: "fanfic-writer",
+    name: "Fanfic Writer",
+    kind: "rewrite",
+    prompt: "Rewrite OOC dialogue.",
+    minScore: 8,
+  },
+  {
+    type: "character-tracker",
+    name: "Character Tracker",
+    kind: "tracker",
+    prompt: "Record character notes.",
+    minScore: 7,
+  },
+]);
+
+// Uninstalled currentAgents entry stays in value() unchanged
+const uninstalledSnap = {
+  type: "uninstalled-agent",
+  name: "Removed Agent",
+  kind: "rewrite",
+  prompt: "Keep me.",
+  minScore: 9,
+};
+const pickerWithStored = S.agentPicker([uninstalledSnap, { type: "character-tracker", name: "Old", kind: "tracker", prompt: "Old", minScore: 7 }]);
+await new Promise((r) => setTimeout(r, 0));
+assert.deepEqual(pickerWithStored.value(), [
+  {
+    type: "character-tracker",
+    name: "Character Tracker",
+    kind: "tracker",
+    prompt: "Record character notes.",
+    minScore: 7,
+  },
+  uninstalledSnap,
+]);
+
+// Max-5 cap disables remaining unchecked boxes at 5
+const sixAgentsPayload = [
+  "character-tracker",
+  "world-state",
+  "quest",
+  "persona-stats",
+  "relationship-tracker",
+  "inventory-tracker",
+].map((type, i) => ({
+  id: `ag:${i}`,
+  type,
+  name: `Agent ${i + 1}`,
+  description: `Desc ${i + 1}`,
+  phase: "output_generation",
+  promptTemplate: `Prompt ${i + 1}`,
+  settings: {},
+}));
+globalThis.__MARINARA_HOST__.api.api.get = async (path) => {
+  if (path === "/agents") return sixAgentsPayload;
+  throw new Error(`Unexpected GET ${path}`);
+};
+const capPicker = S.agentPicker();
+await new Promise((r) => setTimeout(r, 0));
+const capBoxes = all(capPicker.nodes[0]).filter((n) => n.tag === "input" && n.attrs.type === "checkbox");
+assert.equal(capBoxes.length, 6);
+for (let i = 0; i < 5; i++) {
+  capBoxes[i].checked = true;
+  capBoxes[i].listeners.change();
+}
+assert.equal(capBoxes[5].disabled, true);
+assert.equal(capBoxes[0].disabled, false);
+assert.equal(capPicker.value().length, 5);
+capBoxes[0].checked = false;
+capBoxes[0].listeners.change();
+assert.equal(capBoxes[5].disabled, false);
+
+// Hide on failed fetch
+globalThis.__MARINARA_HOST__.api.api.get = async () => {
+  throw new Error("agents endpoint down");
+};
+const failedPicker = S.agentPicker();
+await new Promise((r) => setTimeout(r, 0));
+assert.equal(failedPicker.nodes[0].hidden, true);
+assert.equal(failedPicker.nodes[0].children.length, 0);
+
+// POST /stories body includes settings.agents when an agent is checked in New story form
+let postedWithAgents = null;
+let putSettingsBody = null;
+globalThis.__MARINARA_HOST__ = {
+  api: {
+    api: {
+      async get(path) {
+        if (path === "/connections") return [];
+        if (path.startsWith("/characters?")) return { items: [], hasMore: false };
+        if (path.startsWith("/lorebooks?")) return { items: [], hasMore: false };
+        if (path === "/prompts") return [];
+        if (path === "/agents") return twoAgentsPayload;
+        if (path === "/story-writer/stories/story%3Awith-agents") {
+          return {
+            id: "story:with-agents",
+            title: "Agent Harbor",
+            chapterCount: 0,
+            chapters: [],
+            settings: postedWithAgents?.settings,
+          };
+        }
+        throw new Error(`Unexpected GET ${path}`);
+      },
+      async post(path, body) {
+        if (path === "/story-writer/stories") {
+          postedWithAgents = body;
+          return { id: "story:with-agents" };
+        }
+        throw new Error(`Unexpected POST ${path}`);
+      },
+      async put(path, body) {
+        if (path === "/story-writer/stories/story%3Awith-agents/settings") {
+          putSettingsBody = body;
+          return { settings: body };
+        }
+        throw new Error(`Unexpected PUT ${path}`);
+      },
+    },
+  },
+};
+
+await el.openNewStoryForm();
+await new Promise((r) => setTimeout(r, 0));
+const formAgentBoxes = all(el).filter((n) => n.tag === "input" && n.attrs.type === "checkbox" && n.value === "fanfic-writer");
+assert.equal(formAgentBoxes.length, 1);
+formAgentBoxes[0].checked = true;
+formAgentBoxes[0].listeners.change();
+
+const newTitle = all(el).find((n) => n.tag === "input" && n.attrs.placeholder === "Story title");
+newTitle.value = "Agent Harbor";
+await all(el)
+  .find((n) => n.tag === "form")
+  .listeners.submit({ preventDefault() {} });
+await new Promise((r) => setTimeout(r, 0));
+
+assert.deepEqual(postedWithAgents?.settings?.agents, [
+  {
+    type: "fanfic-writer",
+    name: "Fanfic Writer",
+    kind: "rewrite",
+    prompt: "Rewrite OOC dialogue.",
+    minScore: 8,
+  },
+]);
+
+// PUT /stories/:id/settings also includes settings.agents from reader Author controls
+const readerSettings = all(el).find((n) => n.tag === "details");
+await all(readerSettings)
+  .find((n) => n.tag === "button" && n.textContent === "Save")
+  .listeners.click();
+assert.deepEqual(putSettingsBody?.agents, [
+  {
+    type: "fanfic-writer",
+    name: "Fanfic Writer",
+    kind: "rewrite",
+    prompt: "Rewrite OOC dialogue.",
+    minScore: 8,
+  },
+]);
 
 console.log("story-writer bookshelf ok");
