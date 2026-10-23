@@ -96,7 +96,7 @@ export function agentMessages(agent, { characters, chapterText, previous, settin
   if (agent.kind === "tracker" && previous) parts.push(`<current_tracker_state>\n${String(previous).slice(0, 6000)}\n</current_tracker_state>`);
   parts.push(`<assistant_response>\n${String(chapterText ?? "").slice(0, AGENT_CHAPTER_CAP)}\n</assistant_response>`);
   return [
-    { role: "system", content: `${system}\nThe text to check is a chapter of a prose story, not a roleplay message.` },
+    { role: "system", content: `${system}\nThe text to check is a chapter of a prose story, not a roleplay message. No tools are available here, so ignore any instruction to call a tool.` },
     { role: "user", content: parts.join("\n\n") },
   ];
 }
