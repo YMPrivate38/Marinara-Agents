@@ -10,8 +10,8 @@
   },
   "agents": {
     "story-writer": {
-      "name": "Story Plan Keeper",
-      "description": "Keeps the hidden plan of a Story Writer story up to date after each chapter and prepares the next beat. Added automatically to stories started from Home → Story Writer."
+      "name": "Story Writer",
+      "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer."
     }
   }
 }

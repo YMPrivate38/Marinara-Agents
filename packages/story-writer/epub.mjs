@@ -14,18 +14,13 @@ export function proseToXhtml(text) {
     .join("\n");
 }
 
-// Assistant turns only, in order. A leading "# Heading" line becomes the chapter title.
-export function chaptersFromMessages(messages) {
+// Strip a leading "# Heading" line because the builder renders the chapter title as <h1>.
+export function chaptersFromDocs(docs) {
   const out = [];
-  for (const m of messages) {
-    if (m.role !== "assistant" || !String(m.content ?? "").trim()) continue;
-    let body = String(m.content).trim();
-    let title = `Chapter ${out.length + 1}`;
-    const h = /^#+[ \t]+(.+)\n?/.exec(body);
-    if (h) {
-      title = h[1].trim();
-      body = body.slice(h[0].length);
-    }
+  for (const d of docs) {
+    const body = String(d?.text ?? "").trim().replace(/^#+[ \t]+.+\n?/, "").trim();
+    if (!body) continue;
+    const title = String(d?.title ?? "").trim() || `Chapter ${d?.n ?? out.length + 1}`;
     out.push({ title, body });
   }
   return out;
@@ -85,7 +80,8 @@ function zip(entries) {
 }
 
 export function buildEpub({ id, title, chapters, modified = new Date() }) {
-  const uid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? `urn:uuid:${id}` : String(id);
+  const rawId = String(id).replace(/^story:/, "");
+  const uid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId) ? `urn:uuid:${rawId}` : String(id);
   const stamp = modified.toISOString().replace(/\.\d+Z$/, "Z");
   const files = chapters.map((_, i) => `ch${String(i + 1).padStart(3, "0")}.xhtml`);
   const page = (t, inner) =>
