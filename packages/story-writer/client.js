@@ -1,205 +1,706 @@
 const TAG = "marinara-capability-story-writer";
-// story-writer is the Plan Keeper (its agent id must equal the package id for the runtime hooks); fanfic-writer is the in-character checker.
-const AGENTS = ["fanfic-writer", "story-writer"];
 const POVS = ["third person limited", "third person omniscient", "first person", "second person"];
-const LISTS = ["outline", "secrets", "twists", "offscreen", "threads"];
-
-const meta = (c) => {
-  try { return typeof c.metadata === "string" ? JSON.parse(c.metadata) : c.metadata ?? {}; } catch { return {}; }
+const TENSES = ["past", "present"];
+const LISTS = ["outline", "secrets", "offscreen", "threads", "twists"];
+const PHASES = {
+  writing: "Writing",
+  checking: "Checking the characters",
+  rewriting: "Fixing problems",
+  planning: "Planning what comes next",
 };
+
 const h = (tag, text, attrs = {}) => {
   const e = document.createElement(tag);
-  if (text != null) e.textContent = text;
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) {
+    e.textContent = text;
+    if (tag === "textarea") e.value = text;
+  }
+  for (const k in attrs) {
+    e.setAttribute(k, attrs[k]);
+    if (k === "value") e.value = attrs[k];
+  }
   return e;
 };
 const api = () => globalThis.__MARINARA_HOST__.api.api;
 
 class StoryWriterElement extends HTMLElement {
-  static storyChats(chats) {
-    const when = (c) => c.lastMessageAt ?? c.updatedAt ?? "";
-    return (Array.isArray(chats) ? chats : []).filter((c) => meta(c).storyWriter === true).sort((a, b) => (when(a) < when(b) ? 1 : -1));
-  }
   static connections(rows) {
-    return (Array.isArray(rows) ? rows : []).filter((r) => r.provider !== "decision");
+    return (Array.isArray(rows) ? rows : []).filter((r) => r && r.provider !== "decision");
   }
-  // Character rows keep the card as a JSON string in `data`.
+  // Character rows keep the card as a JSON string or object in `data`.
   static characterName(row) {
-    try { return (typeof row.data === "string" ? JSON.parse(row.data) : row.data)?.name || row.id; } catch { return row.id; }
+    try {
+      return (typeof row?.data === "string" ? JSON.parse(row.data) : row?.data)?.name || row?.name || row?.id || "";
+    } catch {
+      return row?.name || row?.id || "";
+    }
   }
-
-  // One line per item; a twist is "text | reveal hint".
-  static toLines(key, items) {
-    return (items ?? []).map((i) => (key === "twists" ? (i.reveal ? `${i.text} | ${i.reveal}` : i.text) : i)).join("\n");
+  static phaseLabel(phase) {
+    return PHASES[phase] ?? "Writing";
   }
-  static fromLines(key, text) {
-    return text.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
-      if (key !== "twists") return l;
-      const [t, ...r] = l.split("|");
-      return { text: t.trim(), reveal: r.join("|").trim() || null };
+  static jobLine(job) {
+    const total = job?.total ?? 1;
+    const cur = Math.min((job?.done ?? 0) + 1, total);
+    return `Chapter ${cur} of ${total} — ${StoryWriterElement.phaseLabel(job?.phase)}`;
+  }
+  static splitParagraphs(text) {
+    return String(text ?? "")
+      .split(/\r?\n\s*\r?\n/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+  }
+  static listLines(text) {
+    return String(text ?? "")
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+  }
+  static formatTwists(twists) {
+    return (Array.isArray(twists) ? twists : [])
+      .map((t) => (typeof t === "string" ? t.trim() : t?.reveal ? `${t.text} | ${t.reveal}` : String(t?.text ?? "").trim()))
+      .filter(Boolean)
+      .join("\n");
+  }
+  static parseTwists(text) {
+    return StoryWriterElement.listLines(text)
+      .map((l) => {
+        const [t, ...r] = l.split("|");
+        return { text: t.trim(), reveal: r.join("|").trim() || null };
+      })
+      .filter((t) => t.text);
+  }
+  static clampWords(v) {
+    if (v === null || v === undefined || v === "" || typeof v === "boolean") return 2500;
+    const n = Math.round(Number(v));
+    return Number.isFinite(n) ? Math.min(8000, Math.max(300, n)) : 2500;
+  }
+  static storyPath(id, suffix = "") {
+    const tail = suffix ? (suffix.startsWith("/") ? suffix : `/${suffix}`) : "";
+    return `/story-writer/stories/${encodeURIComponent(id)}${tail}`;
+  }
+  static styleFields(style = {}) {
+    const words = h("input", null, {
+      type: "number",
+      min: "300",
+      max: "8000",
+      value: String(StoryWriterElement.clampWords(style?.chapterWords)),
     });
-  }
-
-  async generatePlan(chatId, premise, style) {
-    return api().post(`/story-writer/plan/${encodeURIComponent(chatId)}`, { premise, style });
-  }
-
-  // Chapter length / point of view / tense inputs; value() reads them back.
-  static styleFields(style) {
-    const words = h("input", null, { type: "number", min: "300", max: "8000", value: String(style.chapterWords) });
     const pov = h("select");
     for (const p of POVS) pov.append(h("option", p, { value: p }));
-    pov.value = style.pointOfView;
+    pov.value = POVS.includes(style?.pointOfView) ? style.pointOfView : POVS[0];
     const tense = h("select");
-    for (const t of ["past", "present"]) tense.append(h("option", t, { value: t }));
-    tense.value = style.tense;
-    return { nodes: [h("label", "Chapter length (words)"), words, h("label", "Point of view"), pov, h("label", "Tense"), tense], value: () => ({ chapterWords: Number(words.value), pointOfView: pov.value, tense: tense.value }) };
-  }
-
-  planPanel(story) {
-    const box = h("div", null, { style: "margin:4px 0 12px 16px;display:grid;gap:6px;max-width:560px" });
-    const url = `/story-writer/plan/${encodeURIComponent(story.id)}`;
-    let state = { plan: null, revision: null };
-    let shown = false;
-    let armed = false;
-    const msg = h("p", "");
-    const draw = () => {
-      armed = false;
-      const kids = [];
-      const { plan } = state;
-      const premise = h("textarea", plan?.premise ?? "", { rows: "2", placeholder: "Premise" });
-      if (!plan) kids.push(h("p", "No plan yet."), premise);
-      else if (!shown) kids.push(h("p", "Spoilers hidden."));
-      const reveal = h("button", shown ? "Hide spoilers" : "Reveal spoilers", { type: "button" });
-      reveal.addEventListener("click", () => { shown = !shown; draw(); });
-      const fields = {};
-      const style = plan ? StoryWriterElement.styleFields(plan.style) : null;
-      if (style) kids.push(...style.nodes);
-      if (plan && shown) {
-        for (const k of LISTS) {
-          fields[k] = h("textarea", StoryWriterElement.toLines(k, plan[k]), { rows: "4" });
-          kids.push(h("label", k[0].toUpperCase() + k.slice(1) + (k === "twists" ? " (text | reveal hint)" : "")), fields[k]);
-        }
-        fields.beat = h("textarea", plan.beat, { rows: "2" });
-        kids.push(h("label", "Next beat"), fields.beat);
-      }
-      const save = h("button", "Save", { type: "button" });
-      save.addEventListener("click", async () => {
-        const next = { ...state.plan, style: style.value() };
-        for (const k of LISTS) if (fields[k]) next[k] = StoryWriterElement.fromLines(k, fields[k].value);
-        if (fields.beat) next.beat = fields.beat.value;
-        try { state = await api().put(url, { plan: next, revision: state.revision }); msg.textContent = "Saved."; draw(); }
-        catch (error) { msg.textContent = `Could not save: ${error?.message ?? error}`; }
-      });
-      const regen = h("button", plan ? "Regenerate" : "Generate plan", { type: "button" });
-      regen.addEventListener("click", async () => {
-        // Two clicks: regenerating overwrites the stored plan.
-        if (plan && !armed) { armed = true; regen.textContent = "Confirm regenerate"; return; }
-        const text = (plan ? plan.premise : premise.value).trim();
-        if (!text) return void (msg.textContent = "Enter a premise first.");
-        regen.disabled = true;
-        msg.textContent = "Generating…";
-        try { state = await this.generatePlan(story.id, text, style?.value()); msg.textContent = ""; draw(); }
-        catch (error) { msg.textContent = `Could not generate the plan: ${error?.message ?? error}`; regen.disabled = false; }
-      });
-      const bar = h("div", null, { style: "display:flex;gap:8px" });
-      bar.append(...(plan ? [reveal, save] : []), regen);
-      box.replaceChildren(...kids, bar, msg);
+    for (const t of TENSES) tense.append(h("option", t, { value: t }));
+    tense.value = TENSES.includes(style?.tense) ? style.tense : TENSES[0];
+    return {
+      nodes: [
+        h("label", "Chapter length (words)"),
+        words,
+        h("label", "Point of view"),
+        pov,
+        h("label", "Tense"),
+        tense,
+      ],
+      value: () => ({
+        chapterWords: StoryWriterElement.clampWords(words.value),
+        pointOfView: pov.value,
+        tense: tense.value,
+      }),
     };
-    api().get(url).then((r) => { state = r; draw(); }).catch((error) => { msg.textContent = `Could not load the plan: ${error?.message ?? error}`; box.append(msg); });
-    return box;
   }
 
   connectedCallback() {
     this.load();
   }
 
+  disconnectedCallback() {
+    this.stopPolling();
+    this.clearTimers();
+  }
+
+  stopPolling() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.activeJobId = null;
+  }
+
+  clearTimers() {
+    if (this.deleteTimer) {
+      clearTimeout(this.deleteTimer);
+      this.deleteTimer = null;
+    }
+    if (this.regenTimer) {
+      clearTimeout(this.regenTimer);
+      this.regenTimer = null;
+    }
+  }
+
   async load() {
+    this.stopPolling();
+    this.clearTimers();
+    this.currentStory = null;
     this.replaceChildren(h("p", "Loading stories…"));
     try {
-      const [chats, conns, chars] = await Promise.all([api().get("/chats"), api().get("/connections"), api().get("/characters")]);
-      this.render(StoryWriterElement.storyChats(chats), StoryWriterElement.connections(conns), Array.isArray(chars) ? chars : []);
+      const stories = await api().get("/story-writer/stories");
+      this.renderShelf(Array.isArray(stories) ? stories : []);
     } catch (error) {
-      const retry = h("button", "Retry");
+      const retry = h("button", "Retry", { type: "button" });
       retry.addEventListener("click", () => this.load());
       this.replaceChildren(h("p", `Could not load stories: ${error?.message ?? error}`), retry);
     }
   }
 
-  render(stories, conns, chars) {
-    const root = h("div", null, { style: "padding:24px" });
-    root.append(h("h2", "Story Writer"));
-    if (this.notice) root.append(h("p", this.notice));
-    this.notice = "";
-    if (!stories.length) root.append(h("p", "No stories yet. Start one below."));
-    for (const s of stories) {
-      const row = h("div", null, { style: "display:flex;gap:12px;align-items:center;margin:8px 0" });
-      const when = s.lastMessageAt ?? s.updatedAt;
-      row.append(h("strong", s.name || "Untitled"), h("span", when ? `Last activity ${new Date(when).toLocaleString()}` : "No activity yet"));
-      const open = h("button", "Open");
-      open.addEventListener("click", () => this.capabilityProps?.openChat?.(s.id));
-      const exp = h("button", "Export EPUB");
-      const err = h("span", "");
-      exp.addEventListener("click", async () => {
-        exp.disabled = true;
-        err.textContent = "";
-        try {
-          await api().download(`/story-writer/epub/${encodeURIComponent(s.id)}`, "story.epub");
-        } catch (error) {
-          err.textContent = `Could not export: ${error?.message ?? error}`;
-        }
-        exp.disabled = false;
-      });
-      const plan = h("button", "Plan");
-      let panel = null;
-      plan.addEventListener("click", () => {
-        if (panel) { panel.remove(); panel = null; return; }
-        panel = this.planPanel(s);
-        row.after(panel);
-      });
-      row.append(open, plan, exp, err);
+  render(stories) {
+    this.renderShelf(stories);
+  }
+
+  renderShelf(stories = []) {
+    const root = h("div", null, { style: "padding:24px;display:grid;gap:12px;max-width:720px" });
+    const head = h("div", null, { style: "display:flex;gap:12px;align-items:center;justify-content:space-between" });
+    const newBtn = h("button", "New story", { type: "button" });
+    newBtn.addEventListener("click", () => this.openNewStoryForm());
+    head.append(h("h2", "Story Writer"), newBtn);
+    root.append(head);
+
+    const list = Array.isArray(stories) ? stories : [];
+    if (!list.length) {
+      root.append(h("p", "No stories yet."));
+    }
+    for (const s of list) {
+      const row = h("div", null, { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:6px 0" });
+      const when = s.lastChapterAt ?? s.createdAt ?? s.updatedAt;
+      row.append(
+        h("strong", s.title || s.name || "Untitled"),
+        h("span", `${s.chapterCount ?? 0} chapters`, { style: "opacity:0.7" }),
+        h("span", when ? new Date(when).toLocaleString() : "", { style: "opacity:0.7" }),
+      );
+      const open = h("button", "Open", { type: "button" });
+      open.addEventListener("click", () => this.openStory(s.id));
+      row.append(open);
       root.append(row);
     }
+    this.replaceChildren(root);
+  }
 
-    const form = h("form", null, { style: "margin-top:24px;display:grid;gap:8px;max-width:360px" });
-    const title = h("input", null, { required: "", placeholder: "Story title" });
-    const premise = h("textarea", null, { rows: "3", placeholder: "Premise (the hidden plan is drafted from it)" });
-    const look = StoryWriterElement.styleFields({ chapterWords: 2500, pointOfView: POVS[0], tense: "past" });
+  async openNewStoryForm() {
+    this.stopPolling();
+    this.clearTimers();
+    const [conns, chars, lorebooks] = await Promise.all([
+      api().get("/connections").catch(() => []),
+      api().get("/characters").catch(() => []),
+      api().get("/lorebooks").catch(() => null),
+    ]);
+    this.renderNewStoryForm({
+      connections: StoryWriterElement.connections(conns),
+      characters: Array.isArray(chars) ? chars : [],
+      lorebooks: Array.isArray(lorebooks) ? lorebooks : null,
+    });
+  }
+
+  renderNewStoryForm({ connections = [], characters = [], lorebooks = null } = {}) {
+    const root = h("div", null, { style: "padding:24px;display:grid;gap:12px;max-width:560px" });
+    const back = h("button", "Back", { type: "button" });
+    back.addEventListener("click", () => this.load());
+    const head = h("div", null, { style: "display:flex;gap:12px;align-items:center" });
+    head.append(back, h("h2", "New story"));
+    root.append(head);
+
+    const form = h("form", null, { style: "display:grid;gap:8px" });
+    const title = h("input", null, { type: "text", required: "", maxlength: "200", value: "", placeholder: "Story title" });
+    const premise = h("textarea", "", { rows: "4", maxlength: "2000", placeholder: "Premise (optional)" });
     const conn = h("select");
     conn.append(h("option", "Engine default", { value: "" }));
-    for (const c of conns) conn.append(h("option", c.name || c.id, { value: c.id }));
-    const char = h("select");
-    char.append(h("option", "No character", { value: "" }));
-    for (const c of chars) char.append(h("option", StoryWriterElement.characterName(c), { value: c.id }));
+    for (const c of StoryWriterElement.connections(connections)) {
+      conn.append(h("option", c.name || c.id, { value: c.id }));
+    }
+    conn.value = "";
+
+    const charBox = h("div", null, { style: "display:grid;gap:4px" });
+    const charChecks = [];
+    for (const c of Array.isArray(characters) ? characters : []) {
+      const cb = h("input", null, { type: "checkbox", value: c.id });
+      const item = h("label", null, { style: "display:flex;gap:6px;align-items:center" });
+      item.append(cb, h("span", StoryWriterElement.characterName(c)));
+      charBox.append(item);
+      charChecks.push(cb);
+    }
+
+    const loreChecks = [];
+    let loreNodes = [];
+    if (lorebooks !== null) {
+      const loreBox = h("div", null, { style: "display:grid;gap:4px" });
+      for (const l of lorebooks) {
+        const cb = h("input", null, { type: "checkbox", value: l.id });
+        const item = h("label", null, { style: "display:flex;gap:6px;align-items:center" });
+        item.append(cb, h("span", l.name || l.id));
+        loreBox.append(item);
+        loreChecks.push(cb);
+      }
+      loreNodes = [h("label", "Lorebooks"), loreBox];
+    }
+
+    const style = StoryWriterElement.styleFields({ chapterWords: 2500, pointOfView: POVS[0], tense: "past" });
     const status = h("p", "");
-    const go = h("button", "Create story", { type: "submit" });
-    form.append(h("h3", "New story"), title, premise, ...look.nodes, conn, char, go, status);
+    const submit = h("button", "Create story", { type: "submit" });
+
+    form.append(
+      h("label", "Title"),
+      title,
+      h("label", "Premise"),
+      premise,
+      h("label", "Connection"),
+      conn,
+      h("label", "Characters"),
+      charBox,
+      ...loreNodes,
+      ...style.nodes,
+      submit,
+      status,
+    );
+
     form.addEventListener("submit", async (ev) => {
-      ev.preventDefault();
-      const name = title.value.trim();
-      if (!name) return void (status.textContent = "Story title is required.");
-      go.disabled = true;
+      ev?.preventDefault?.();
+      const cleanTitle = (title.value ?? "").trim();
+      if (!cleanTitle) return void (status.textContent = "Story title is required.");
+      const cleanPremise = (premise.value ?? "").trim();
+      if (cleanPremise.length > 2000) return void (status.textContent = "Premise must be at most 2000 characters.");
+      const characterIds = charChecks.filter((c) => c.checked).map((c) => c.value);
+      if (characterIds.length > 20) return void (status.textContent = "Select at most 20 characters.");
+      const lorebookIds = loreChecks.filter((c) => c.checked).map((c) => c.value);
+      if (lorebookIds.length > 20) return void (status.textContent = "Select at most 20 lorebooks.");
+
+      submit.disabled = true;
       status.textContent = "Creating…";
       try {
-        const chat = await api().post("/chats", { name, mode: "roleplay", characterIds: char.value ? [char.value] : [], connectionId: conn.value || null });
-        // Only add agents that are installed; creating the story must not fail without them.
-        const agents = await api().get("/agents").catch(() => []);
-        const have = Array.isArray(meta(chat).activeAgentIds) ? meta(chat).activeAgentIds : [];
-        const add = AGENTS.filter((a) => !have.includes(a) && Array.isArray(agents) && agents.some((x) => x.type === a || x.id === a));
-        await api().patch(`/chats/${chat.id}/metadata`, { storyWriter: true, enableAgents: true, activeAgentIds: [...have, ...add] });
-        try {
-          await this.generatePlan(chat.id, premise.value.trim(), look.value());
-        } catch (error) {
-          this.notice = `Story created, but the plan could not be generated: ${error?.message ?? error}. Open Plan on the story and press Generate plan.`;
-        }
-        this.capabilityProps?.openChat?.(chat.id);
-        this.load();
+        const res = await api().post("/story-writer/stories", {
+          title: cleanTitle,
+          premise: cleanPremise,
+          characterIds,
+          lorebookIds,
+          connectionId: conn.value || null,
+          style: style.value(),
+        });
+        const notice = res?.planError
+          ? `Story created, but the plan could not be generated: ${res.planError}. Open Plan and press Regenerate.`
+          : "";
+        await this.openStory(res.id, notice);
       } catch (error) {
         status.textContent = `Could not create story: ${error?.message ?? error}`;
-        go.disabled = false;
+        submit.disabled = false;
       }
     });
+
     root.append(form);
+    this.replaceChildren(root);
+  }
+
+  async openStory(id, notice = "") {
+    if (this.currentStory?.id !== id) {
+      this.stopPolling();
+      this.clearTimers();
+      this.planOpen = false;
+      this.readingChapter = null;
+      this.jobError = "";
+      this.activeJob = null;
+    }
+    if (notice) this.readerNotice = notice;
+    try {
+      const story = await api().get(StoryWriterElement.storyPath(id));
+      this.renderReader(story);
+    } catch (error) {
+      const back = h("button", "Back", { type: "button" });
+      back.addEventListener("click", () => this.load());
+      this.replaceChildren(h("p", `Could not load story: ${error?.message ?? error}`), back);
+    }
+  }
+
+  planPanel(story) {
+    const box = h("div", null, { style: "padding:12px;display:grid;gap:8px;max-width:560px" });
+    const url = StoryWriterElement.storyPath(story.id, "/plan");
+    let state = { plan: null, revision: null };
+    let shown = false;
+    let armed = false;
+    let conflict = false;
+    const msg = h("p", "");
+
+    const clearRegen = () => {
+      armed = false;
+      if (this.regenTimer) {
+        clearTimeout(this.regenTimer);
+        this.regenTimer = null;
+      }
+    };
+
+    const loadPlan = () => {
+      api()
+        .get(url)
+        .then((r) => {
+          state = r ?? { plan: null, revision: null };
+          conflict = false;
+          draw();
+        })
+        .catch((error) => {
+          msg.textContent = `Could not load the plan: ${error?.message ?? error}`;
+          box.replaceChildren(msg);
+        });
+    };
+
+    const draw = () => {
+      clearRegen();
+      const plan = state?.plan ?? {
+        premise: story.premise ?? "",
+        outline: [],
+        secrets: [],
+        twists: [],
+        offscreen: [],
+        threads: [],
+        beat: "",
+        style: { chapterWords: 2500, pointOfView: POVS[0], tense: "past" },
+      };
+      const kids = [];
+      const style = StoryWriterElement.styleFields(plan.style);
+      kids.push(...style.nodes);
+
+      if (!shown) {
+        kids.push(h("p", "Spoilers hidden"));
+      }
+      const reveal = h("button", shown ? "Hide spoilers" : "Reveal spoilers", { type: "button" });
+      reveal.addEventListener("click", () => {
+        shown = !shown;
+        draw();
+      });
+
+      const fields = {};
+      if (shown) {
+        for (const k of LISTS) {
+          const text = k === "twists" ? StoryWriterElement.formatTwists(plan.twists) : (plan[k] ?? []).join("\n");
+          fields[k] = h("textarea", text, { rows: "4" });
+          const label = k[0].toUpperCase() + k.slice(1) + (k === "twists" ? " (text | reveal hint)" : "");
+          kids.push(h("label", label), fields[k]);
+        }
+        fields.beat = h("textarea", plan.beat ?? "", { rows: "2" });
+        kids.push(h("label", "Next beat"), fields.beat);
+      }
+
+      const save = h("button", "Save", { type: "button" });
+      save.addEventListener("click", async () => {
+        const next = { ...plan, style: style.value() };
+        if (shown) {
+          for (const k of LISTS) {
+            next[k] = k === "twists" ? StoryWriterElement.parseTwists(fields[k].value) : StoryWriterElement.listLines(fields[k].value);
+          }
+          next.beat = (fields.beat.value ?? "").trim();
+        }
+        try {
+          state = await api().put(url, { plan: next, revision: state?.revision ?? null });
+          conflict = false;
+          msg.textContent = "Saved.";
+          draw();
+        } catch (error) {
+          const text = String(error?.message ?? error);
+          if (error?.status === 409 || error?.statusCode === 409 || /409|plan changed/i.test(text)) {
+            conflict = true;
+            msg.textContent = "The plan changed; reload it and try again";
+            draw();
+          } else {
+            msg.textContent = `Could not save: ${text}`;
+          }
+        }
+      });
+
+      const regen = h("button", "Regenerate", { type: "button" });
+      regen.addEventListener("click", async () => {
+        if (!armed) {
+          armed = true;
+          regen.textContent = "Confirm regenerate";
+          this.regenTimer = setTimeout(() => {
+            armed = false;
+            regen.textContent = "Regenerate";
+          }, 4000);
+          return;
+        }
+        clearRegen();
+        regen.disabled = true;
+        msg.textContent = "Generating…";
+        try {
+          state = await api().post(url, { premise: story.premise ?? plan.premise ?? "", style: style.value() });
+          conflict = false;
+          msg.textContent = "";
+          draw();
+        } catch (error) {
+          msg.textContent = `Could not generate the plan: ${error?.message ?? error}`;
+          regen.disabled = false;
+          regen.textContent = "Regenerate";
+        }
+      });
+
+      const bar = h("div", null, { style: "display:flex;gap:8px;flex-wrap:wrap" });
+      bar.append(reveal, save, regen);
+      if (conflict) {
+        const reload = h("button", "Reload", { type: "button" });
+        reload.addEventListener("click", () => {
+          msg.textContent = "";
+          loadPlan();
+        });
+        bar.append(reload);
+      }
+      box.replaceChildren(...kids, bar, msg);
+    };
+
+    loadPlan();
+    return box;
+  }
+
+  startPolling(storyId, jobId) {
+    // Keep only one poll loop per active job across re-renders.
+    if (this.activeJobId === jobId && this.pollTimer) return;
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.activeJobId = jobId;
+    this.pollTimer = setInterval(() => this.pollJob(storyId, jobId), 2000);
+  }
+
+  async pollJob(storyId, jobId) {
+    try {
+      const job = await api().get(`/story-writer/jobs/${encodeURIComponent(jobId)}`);
+      this.activeJob = job;
+      if (job.status === "running") {
+        // Update the status line only: a full re-render would reset an open plan editor and the reading pane.
+        if (this.jobText && this.currentStory?.id === storyId) this.jobText.textContent = StoryWriterElement.jobLine(job);
+        return;
+      }
+      this.stopPolling();
+      this.activeJob = null;
+      if (job.status === "error") {
+        this.jobError = job.error || "Failed to write chapter.";
+      }
+      if (this.currentStory?.id === storyId) {
+        await this.openStory(storyId);
+      }
+    } catch (error) {
+      this.stopPolling();
+      this.activeJob = null;
+      this.jobError = error?.message ?? String(error);
+      if (this.currentStory?.id === storyId) this.renderReader(this.currentStory);
+    }
+  }
+
+  async openChapter(storyId, n) {
+    try {
+      const ch = await api().get(StoryWriterElement.storyPath(storyId, `/chapters/${n}`));
+      this.readingChapter = ch;
+      if (this.currentStory?.id === storyId) this.renderReader(this.currentStory);
+    } catch (error) {
+      this.jobError = `Could not load chapter: ${error?.message ?? error}`;
+      if (this.currentStory?.id === storyId) this.renderReader(this.currentStory);
+    }
+  }
+
+  renderReader(story) {
+    if (this.currentStory && this.currentStory.id !== story.id) {
+      this.planOpen = false;
+      this.readingChapter = null;
+    }
+    this.currentStory = story;
+    this.jobText = null;
+
+    const isRunning = Boolean(this.activeJob && this.activeJob.storyId === story.id && this.activeJob.status === "running");
+    const root = h("div", null, { style: "padding:24px;display:grid;gap:12px;max-width:720px" });
+
+    const head = h("div", null, { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+    const back = h("button", "Back to shelf", { type: "button" });
+    back.addEventListener("click", () => this.load());
+    head.append(back, h("h2", story.title || "Untitled"));
+    root.append(head);
+
+    if (this.readerNotice) {
+      const noticeBox = h("div", null, { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+      const dismiss = h("button", "Dismiss", { type: "button" });
+      dismiss.addEventListener("click", () => {
+        this.readerNotice = "";
+        noticeBox.replaceChildren();
+      });
+      noticeBox.append(h("span", this.readerNotice), dismiss);
+      root.append(noticeBox);
+    }
+
+    const statusMsg = h("p", this.jobError || "");
+
+    const controls = h("div", null, { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+    const nudgeLabel = h("label", "Nudge for the next chapter (optional)");
+    const nudgeInput = h("input", null, { type: "text", value: "", placeholder: "Optional nudge" });
+    const writeOne = h("button", "Write next chapter", { type: "button" });
+    writeOne.disabled = isRunning;
+
+    const autoLabel = h("label", "Autopilot");
+    const autoInput = h("input", null, { type: "number", min: "1", max: "20", value: String(this.autopilotCount || 3) });
+    const writeMany = h("button", "Write N chapters", { type: "button" });
+    writeMany.disabled = isRunning;
+
+    const startWrite = async (count) => {
+      const n = Math.min(20, Math.max(1, Math.trunc(Number(count) || 1)));
+      const nudge = (nudgeInput.value ?? "").trim() || undefined;
+      writeOne.disabled = true;
+      writeMany.disabled = true;
+      statusMsg.textContent = "";
+      this.jobError = "";
+      try {
+        const res = await api().post(StoryWriterElement.storyPath(story.id, "/write"), { count: n, nudge });
+        nudgeInput.value = "";
+        this.activeJob = { id: res.jobId, storyId: story.id, status: "running", done: 0, total: n, phase: "writing" };
+        this.startPolling(story.id, res.jobId);
+        this.renderReader(this.currentStory);
+      } catch (error) {
+        statusMsg.textContent = error?.message ?? String(error);
+        writeOne.disabled = false;
+        writeMany.disabled = false;
+      }
+    };
+
+    writeOne.addEventListener("click", () => startWrite(1));
+    writeMany.addEventListener("click", () => {
+      this.autopilotCount = Math.min(20, Math.max(1, Math.trunc(Number(autoInput.value) || 3)));
+      startWrite(this.autopilotCount);
+    });
+
+    const planSlot = h("div");
+    const planBtn = h("button", "Plan", { type: "button" });
+    planBtn.addEventListener("click", () => {
+      this.planOpen = !this.planOpen;
+      if (this.planOpen) {
+        planSlot.replaceChildren(this.planPanel(story));
+      } else {
+        if (this.regenTimer) {
+          clearTimeout(this.regenTimer);
+          this.regenTimer = null;
+        }
+        planSlot.replaceChildren();
+      }
+    });
+    if (this.planOpen) {
+      planSlot.replaceChildren(this.planPanel(story));
+    }
+
+    const epubBtn = h("button", "Export EPUB", { type: "button" });
+    epubBtn.addEventListener("click", async () => {
+      epubBtn.disabled = true;
+      statusMsg.textContent = "";
+      try {
+        await api().download(`/story-writer/epub/${encodeURIComponent(story.id)}`, "story.epub");
+      } catch (error) {
+        statusMsg.textContent = `Could not export: ${error?.message ?? error}`;
+      }
+      epubBtn.disabled = false;
+    });
+
+    let delArmed = false;
+    const delBtn = h("button", "Delete story", { type: "button" });
+    delBtn.addEventListener("click", async () => {
+      if (!delArmed) {
+        delArmed = true;
+        delBtn.textContent = "Confirm delete";
+        this.deleteTimer = setTimeout(() => {
+          delArmed = false;
+          delBtn.textContent = "Delete story";
+        }, 4000);
+        return;
+      }
+      if (this.deleteTimer) {
+        clearTimeout(this.deleteTimer);
+        this.deleteTimer = null;
+      }
+      delBtn.disabled = true;
+      try {
+        await api().delete(StoryWriterElement.storyPath(story.id));
+        this.stopPolling();
+        await this.load();
+      } catch (error) {
+        statusMsg.textContent = `Could not delete story: ${error?.message ?? error}`;
+        delBtn.disabled = false;
+        delArmed = false;
+        delBtn.textContent = "Delete story";
+      }
+    });
+
+    controls.append(nudgeLabel, nudgeInput, writeOne, autoLabel, autoInput, writeMany, planBtn, epubBtn, delBtn);
+    root.append(controls, statusMsg);
+
+    if (isRunning) {
+      const job = this.activeJob;
+      const jobBox = h("div", null, { style: "display:flex;gap:8px;align-items:center" });
+      const cancelBtn = h("button", "Cancel", { type: "button" });
+      cancelBtn.addEventListener("click", async () => {
+        cancelBtn.disabled = true;
+        try {
+          await api().post(`/story-writer/jobs/${encodeURIComponent(job.id)}/cancel`, {});
+          await this.pollJob(story.id, job.id);
+        } catch (error) {
+          statusMsg.textContent = `Could not cancel: ${error?.message ?? error}`;
+          cancelBtn.disabled = false;
+        }
+      });
+      this.jobText = h("span", StoryWriterElement.jobLine(job));
+      jobBox.append(this.jobText, cancelBtn);
+      root.append(jobBox);
+    }
+
+    root.append(planSlot);
+
+    // Chapter list: only title, blurb, and wordCount are ever read or rendered.
+    const listBox = h("div", null, { style: "display:grid;gap:8px" });
+    const chapters = Array.isArray(story.chapters) ? story.chapters : [];
+    if (!chapters.length) {
+      listBox.append(h("p", "No chapters yet.", { style: "opacity:0.7" }));
+    }
+    for (const ch of chapters) {
+      const item = h("div", null, { style: "padding:8px 0;display:grid;gap:4px" });
+      const top = h("div", null, { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap" });
+      top.append(
+        h("strong", `Chapter ${ch.n}: ${ch.title || `Chapter ${ch.n}`}`),
+        h("span", `${ch.wordCount ?? 0} words`, { style: "opacity:0.7" }),
+      );
+      const readBtn = h("button", "Read", { type: "button" });
+      readBtn.addEventListener("click", () => this.openChapter(story.id, ch.n));
+      top.append(readBtn);
+      item.append(top);
+      if (ch.blurb) {
+        item.append(h("p", ch.blurb, { style: "opacity:0.7;margin:0" }));
+      }
+      listBox.append(item);
+    }
+    root.append(listBox);
+
+    if (this.readingChapter) {
+      const ch = this.readingChapter;
+      const pane = h("div", null, {
+        style: "margin-top:16px;padding:16px;max-width:65ch;line-height:1.6;display:grid;gap:12px",
+      });
+      pane.append(h("h3", `Chapter ${ch.n}: ${ch.title || `Chapter ${ch.n}`}`));
+      for (const p of StoryWriterElement.splitParagraphs(ch.text)) {
+        pane.append(h("p", p, { style: "margin:0" }));
+      }
+      const nav = h("div", null, { style: "display:flex;gap:8px" });
+      const prev = h("button", "Previous chapter", { type: "button" });
+      prev.disabled = ch.n <= 1;
+      prev.addEventListener("click", () => {
+        if (ch.n > 1) this.openChapter(story.id, ch.n - 1);
+      });
+      const totalCh = chapters.length || story.chapterCount || 0;
+      const next = h("button", "Next chapter", { type: "button" });
+      next.disabled = ch.n >= totalCh;
+      next.addEventListener("click", () => {
+        if (ch.n < totalCh) this.openChapter(story.id, ch.n + 1);
+      });
+      const close = h("button", "Close", { type: "button" });
+      close.addEventListener("click", () => {
+        this.readingChapter = null;
+        this.renderReader(this.currentStory);
+      });
+      nav.append(prev, next, close);
+      pane.append(nav);
+      root.append(pane);
+    }
+
     this.replaceChildren(root);
   }
 }

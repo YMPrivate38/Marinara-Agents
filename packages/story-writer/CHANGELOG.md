@@ -1,3 +1,6 @@
+## 0.6.0 — 2026-10-22
+- Changed: Story Writer is now a reader instead of a chat. Pick a story from your shelf, press Write next chapter (or write up to 20 in a row), watch the progress, and read the chapters here. Each chapter in the list shows a spoiler-free teaser. The hidden plan stays hidden until you press Reveal spoilers.
+
 ## 0.5.0 — 2026-10-22
 - Added: stories no longer need a chat. The server can now write a story chapter by chapter on its own (one chapter or up to 20 in a row), check each chapter for out-of-character writing and nonsense and rewrite it when it is bad, and update the hidden plan and the next beat. Each chapter also gets a spoiler-free teaser. The screens for this come in the next update.
 
