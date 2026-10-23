@@ -763,7 +763,7 @@
         "schemaVersion": 1,
         "id": "fanfic-writer",
         "name": "Fanfic Writer",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "description": "Checks fanfiction replies for out-of-character writing and things that don't make sense, and rewrites them when they fall short. Add the Agent in Chat Settings → Agents → Writer Agents for Roleplay mode.",
         "engine": {
           "min": "2.3.0",
@@ -778,8 +778,8 @@
         "files": [
           {
             "path": "agents.json",
-            "sha256": "456be1aa9e4f97b64aa088b55a316a66bd4d806649aa18cca46a555cecda4b9a",
-            "bytes": 2821
+            "sha256": "1e20d2311c9254814806e0a023c215c0c4df60aac8a1d6169d0c94b4a5d259f8",
+            "bytes": 3078
           }
         ],
         "permissions": [
@@ -793,9 +793,9 @@
       },
       "category": "misc",
       "artifact": {
-        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/fanfic-writer-0.2.0.zip",
-        "sha256": "4b82e3e863f0d8c7ab3b90fdd91ff329327e2ae08c74eb4daf4b3a85a62e3fa8",
-        "bytes": 3817
+        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/fanfic-writer-0.3.0.zip",
+        "sha256": "8983a036af413261e6e589b3ed96d8220b8b47cc943c4ed5a603f147191d9f19",
+        "bytes": 4074
       },
       "documentationUrl": "https://github.com/YMPrivate38/Marinara-Agents/blob/main/packages/fanfic-writer/README.md"
     },
