@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  applyMacros,
   buildWriterMessages,
   cardFields,
   chapterId,
@@ -120,8 +121,33 @@ assert.deepEqual(cardFields({ data: '{"name":"Alice","description":"Brave"}' }),
   description: "Brave",
   personality: "",
   scenario: "",
+  examples: "",
 });
-assert.deepEqual(cardFields(null), { name: "", description: "", personality: "", scenario: "" });
+assert.deepEqual(cardFields(null), { name: "", description: "", personality: "", scenario: "", examples: "" });
+// long descriptions are no longer cut at 1500 chars, and example dialogue is kept
+assert.equal(cardFields({ data: { name: "Bo", description: "x".repeat(6000), mes_example: "hi" } }).description.length, 6000);
+assert.equal(cardFields({ data: { data: { name: "Bo", mes_example: "hi" } } }).examples, "hi");
+
+// settings: restraint rule, preset text, opening only for chapter 1, summary of cards
+{
+  const base = { story: { title: "T", premise: "P" }, plan: { beat: "B" }, characters: [{ data: { name: "Bo", mes_example: "Bo: hi" } }] };
+  const sys = (o) => buildWriterMessages({ ...base, n: 1, previousChapters: [], ...o })[0].content;
+  assert.ok(sys({}).includes("Do not invent twists"));
+  assert.ok(sys({ story: { ...base.story, settings: { twists: "none" } } }).includes("Ordinary events only"));
+  assert.ok(sys({ story: { ...base.story, settings: { twists: "free" } } }).includes("may let the story surprise"));
+  assert.ok(sys({}).includes("Example dialogue"));
+  const withSettings = { ...base.story, settings: { presetName: "Plain", presetText: "STYLE_GUIDE_X", intro: "OPENING_X" } };
+  assert.ok(sys({ story: withSettings }).includes("STYLE_GUIDE_X"));
+  assert.ok(sys({ story: withSettings }).includes("OPENING_X"));
+  const macro = { ...base.story, settings: { presetName: "RP", presetText: "{{char}} talks to {{USER}}. {{random}}" } };
+  assert.ok(sys({ story: macro }).includes("Bo talks to the reader. {{random}}"));
+  assert.ok(sys({ story: macro }).includes("used here for a prose story"));
+  assert.equal(applyMacros("{{ Char }}", { char: "A", user: "B" }), "A");
+  assert.ok(!sys({ story: withSettings, n: 2, previousChapters: [{ n: 1, text: "t", summary: "s" }] }).includes("OPENING_X"));
+  assert.ok(sys({}).includes("do not force a cliffhanger"));
+  assert.ok(stepMessages({ plan: {}, chapterText: "", twists: "none" })[0].content.includes("no twist or reveal"));
+  assert.ok(!stepMessages({ plan: {}, chapterText: "", twists: "free" })[0].content.includes("Surprise level"));
+}
 
 // parseCheck / needsRetry / critiqueText / parseStep unit checks
 assert.equal(parseCheck("bad"), null);
@@ -598,6 +624,16 @@ assert.equal(stepMessages({ plan: { beat: "B" }, chapterText: "Hi", n: 1 }).leng
   assert.ok(!dump.includes("SECRET_CHAPTER_BODY_TEXT"));
   assert.equal(view.chapters[0].wordCount, 4);
   assert.deepEqual(Object.keys(view.chapters[0]).sort(), ["blurb", "n", "title", "wordCount"]);
+}
+
+// checker off: one model call for the chapter, one for the plan step, no check call
+{
+  const documents = makeDocuments();
+  const story = await seedStory(documents, "story:nochk", {}, { settings: { checker: false } });
+  let calls = 0;
+  const llm = { async complete() { calls++; return calls === 1 ? "Chapter text." : '{"title":"T","summary":"s","blurb":"b","beat":"next"}'; } };
+  await writeChapter({ story, deps: { documents, resources: {}, llm, parseJsonish: JSON.parse } });
+  assert.equal(calls, 2);
 }
 
 console.log("story-writer pipeline ok");

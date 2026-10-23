@@ -80,11 +80,62 @@ assert.equal(S.storyPath("story:abc-123"), "/story-writer/stories/story%3Aabc-12
 assert.equal(S.storyPath("story:abc-123", "/plan"), "/story-writer/stories/story%3Aabc-123/plan");
 assert.equal(S.storyPath("story:abc-123", "chapters/2"), "/story-writer/stories/story%3Aabc-123/chapters/2");
 
+assert.equal(
+  S.presetText({
+    preset: { id: "p1", name: "Noir" },
+    sections: [
+      { enabled: true, isMarker: false, content: "  Keep sentences crisp.  " },
+      { enabled: false, isMarker: false, content: "DISABLED_SECTION" },
+      { enabled: true, isMarker: true, content: "MARKER_SECTION" },
+      { enabled: true, isMarker: false, content: "   " },
+      { enabled: true, isMarker: false, content: "Show, do not tell." },
+    ],
+  }),
+  "Keep sentences crisp.\n\nShow, do not tell.",
+);
+assert.equal(S.presetText({ sections: [] }), "");
+assert.equal(S.presetText(null), "");
+
+assert.deepEqual(
+  S.greetings({
+    id: "c1",
+    data: JSON.stringify({
+      name: "Ada",
+      first_mes: "Hello there.",
+      alternate_greetings: ["First alt.", "", "   ", "Fourth alt."],
+    }),
+  }),
+  [
+    { label: "Ada — first message", text: "Hello there." },
+    { label: "Ada — alternate 1", text: "First alt." },
+    { label: "Ada — alternate 4", text: "Fourth alt." },
+  ],
+);
+assert.deepEqual(
+  S.greetings({
+    id: "c2",
+    data: {
+      data: {
+        name: "Bea",
+        first_mes: "   ",
+        alternate_greetings: ["Nested alt 1", "Nested alt 2"],
+      },
+    },
+  }),
+  [
+    { label: "Bea — alternate 1", text: "Nested alt 1" },
+    { label: "Bea — alternate 2", text: "Nested alt 2" },
+  ],
+);
+assert.equal(S.greetings({ id: "c3", data: { name: "Cid", first_mes: "x".repeat(4500) } })[0].text.length, 4000);
+
 // (2) Shelf rendering uses textContent only (no stray tags from an <img onerror> title)
 const evil = "<img src=x onerror=alert(1)>";
 const el = new S();
 el.renderShelf([{ id: "story:1", title: evil, chapterCount: 2, createdAt: "2026-01-01T00:00:00Z" }]);
 const shelfNodes = all(el);
+const initialStyle = shelfNodes.filter((n) => n.tag === "style");
+assert.equal(initialStyle.length, 1);
 assert.ok(!shelfNodes.some((n) => n.tag === "img"));
 assert.ok(shelfNodes.some((n) => n.tag === "strong" && n.textContent === evil));
 assert.ok(shelfNodes.some((n) => n.textContent === "2 chapters"));
@@ -167,6 +218,11 @@ all(el)
   .find((n) => n.tag === "button" && n.textContent === "Reveal spoilers")
   .listeners.click();
 
+const planDom = all(el);
+const spoilerBtnIdx = planDom.findIndex((n) => n.tag === "button" && n.textContent === "Hide spoilers");
+const firstSpoilerIdx = planDom.findIndex((n) => n.tag === "label" && n.textContent === "Outline");
+assert.ok(spoilerBtnIdx >= 0 && firstSpoilerIdx > spoilerBtnIdx);
+
 const afterReveal = treeText(el);
 assert.ok(afterReveal.includes("SECRET_MARK"));
 assert.ok(afterReveal.includes("OUTLINE_MARK"));
@@ -225,6 +281,7 @@ assert.deepEqual(limitRes, { selected: addedRes.selected, added: false, atLimit:
 
 // (7) New story form uses paged pickers (never bare /characters or /lorebooks) and escapes <img onerror>
 const formCalls = [];
+let postedStory = null;
 globalThis.__MARINARA_HOST__ = {
   api: {
     api: {
@@ -246,7 +303,17 @@ globalThis.__MARINARA_HOST__ = {
         if (path === "/lorebooks?search=&limit=20&offset=0") {
           return { items: [{ id: "lore:1", name: "World Lore" }], hasMore: false };
         }
+        if (path === "/story-writer/stories/story%3Acreated") {
+          return { id: "story:created", title: "New Harbor", chapterCount: 0, chapters: [] };
+        }
         throw new Error(`Unexpected GET ${path}`);
+      },
+      async post(path, body) {
+        if (path === "/story-writer/stories") {
+          postedStory = body;
+          return { id: "story:created" };
+        }
+        throw new Error(`Unexpected POST ${path}`);
       },
     },
   },
@@ -261,6 +328,7 @@ assert.deepEqual(formCalls, [
   "/connections",
   "/characters?search=&limit=20&offset=0&sort=name-asc",
   "/lorebooks?search=&limit=20&offset=0",
+  "/prompts",
 ]);
 
 const formNodes = all(el);
@@ -289,5 +357,24 @@ all(el)
   .listeners.click();
 assert.ok(treeText(el).includes("0 of 20 selected"));
 assert.ok(all(el).some((n) => n.tag === "button" && n.textContent === "Ada" && !n.disabled));
+
+// Submitting the New story form posts default settings and keeps <style> injected once
+const titleInput = all(el).find((n) => n.tag === "input" && n.attrs.placeholder === "Story title");
+titleInput.value = "New Harbor";
+await all(el)
+  .find((n) => n.tag === "form")
+  .listeners.submit({ preventDefault() {} });
+assert.deepEqual(postedStory?.settings, {
+  twists: "rare",
+  presetName: "",
+  presetText: "",
+  intro: "",
+  checker: true,
+  minScore: 7,
+  maxRetries: 2,
+});
+const stylesAfter = all(el).filter((n) => n.tag === "style");
+assert.equal(stylesAfter.length, 1);
+assert.equal(stylesAfter[0], initialStyle[0]);
 
 console.log("story-writer bookshelf ok");

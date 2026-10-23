@@ -22,6 +22,23 @@ export function normalizeStyle(raw) {
   };
 }
 
+export const TWIST_LEVELS = ["none", "rare", "free"];
+
+// Per-story author controls, editable between chapters. Lenient on purpose: bad values fall back to defaults.
+export function normalizeSettings(raw) {
+  const s = raw && typeof raw === "object" ? raw : {};
+  const clamp = (v, lo, hi, d) => (Number.isFinite(Math.round(Number(v))) && v !== null && v !== "" ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : d);
+  return {
+    twists: TWIST_LEVELS.includes(s.twists) ? s.twists : "rare",
+    presetName: str(s.presetName, 200),
+    presetText: str(s.presetText, 6000),
+    intro: str(s.intro, 4000),
+    checker: s.checker !== false,
+    minScore: clamp(s.minScore, 1, 10, 7),
+    maxRetries: clamp(s.maxRetries, 0, 3, 2),
+  };
+}
+
 export function normalizePlan(raw) {
   const p = raw && typeof raw === "object" ? raw : {};
   return {
