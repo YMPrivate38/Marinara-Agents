@@ -3770,16 +3770,16 @@
           },
           {
             "path": "pipeline.mjs",
-            "sha256": "af3ed1c6a55e7c6df4a95db79c7a86972467fd2dea6caf13018a916a3ddb45e2",
-            "bytes": 24965
+            "sha256": "f69e82f69696f4625af6351813d98914127ba29692afed375d949e45c3105393",
+            "bytes": 25036
           }
         ]
       },
       "category": "misc",
       "artifact": {
         "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/story-writer-0.9.0.zip",
-        "sha256": "b6a5edb26238668edec5ccd95207e77577f1acad576873d3d658cee6044338fe",
-        "bytes": 101948
+        "sha256": "157d9e92ed22a8e268eeb53b6246ecbd835e32ff4bff66d2fcbfd3ecbbf8e182",
+        "bytes": 102019
       },
       "documentationUrl": "https://github.com/YMPrivate38/Marinara-Agents/blob/main/packages/story-writer/README.md"
     },
