@@ -22,6 +22,7 @@ const h = (tag, text, attrs = {}) => {
   return e;
 };
 const api = () => globalThis.__MARINARA_HOST__.api.api;
+let pickerSeq = 0;
 
 class StoryWriterElement extends HTMLElement {
   static connections(rows) {
@@ -107,6 +108,140 @@ class StoryWriterElement extends HTMLElement {
       }),
     };
   }
+  static unwrapPage(res) {
+    if (Array.isArray(res)) return { items: res, hasMore: false };
+    if (Array.isArray(res?.items)) return { items: res.items, hasMore: Boolean(res.hasMore) };
+    return { items: [], hasMore: false };
+  }
+  static pickQuery(path, search = "", offset = 0, sort = "") {
+    const q = `search=${encodeURIComponent(search ?? "")}&limit=20&offset=${Number(offset) || 0}`;
+    return `${path}?${q}${sort ? `&sort=${encodeURIComponent(sort)}` : ""}`;
+  }
+  static togglePick(selected, item, max = 20) {
+    const list = Array.isArray(selected) ? [...selected] : [];
+    if (!item?.id || list.some((x) => x.id === item.id)) {
+      return { selected: list, added: false, atLimit: false };
+    }
+    if (list.length >= max) {
+      return { selected: list, added: false, atLimit: true };
+    }
+    return {
+      selected: [...list, { id: item.id, name: item.name ?? item.id }],
+      added: true,
+      atLimit: false,
+    };
+  }
+  static picker({ label, path, nameOf = (r) => r?.name || r?.id || "", max = 20, sort = "" } = {}) {
+    const text = /^(characters|lorebooks)$/i.test(label) ? `Search ${label.toLowerCase()}` : label || "Search";
+    const hideOnFail = path === "/lorebooks";
+    const inputId = `sw-picker-${++pickerSeq}`;
+    const wrap = h("div", null, { style: hideOnFail ? "display:none" : "display:grid;gap:6px" });
+    wrap.hidden = hideOnFail;
+
+    let selected = [];
+    let rows = [];
+    let offset = 0;
+    let hasMore = false;
+    // Ignore responses from superseded searches or page loads.
+    let seq = 0;
+    let shown = !hideOnFail;
+    let timer = null;
+
+    const labelEl = h("label", text, { for: inputId });
+    const chipsBox = h("div", null, { style: "display:flex;gap:6px;flex-wrap:wrap" });
+    const countEl = h("span", `0 of ${max} selected`, { style: "opacity:0.7" });
+    const input = h("input", null, { type: "search", id: inputId, "aria-label": text, value: "", placeholder: text });
+    const statusEl = h("p", "");
+    const resultsBox = h("div", null, { style: "display:grid;gap:4px" });
+    const moreBox = h("div");
+    const moreBtn = h("button", "Load more", { type: "button" });
+
+    const renderChips = () => {
+      countEl.textContent = `${selected.length} of ${max} selected`;
+      const chips = selected.map((item) => {
+        const chip = h("span", null, { style: "display:inline-flex;gap:4px;align-items:center" });
+        const rm = h("button", "×", { type: "button", "aria-label": `Remove ${item.name}` });
+        rm.addEventListener("click", () => {
+          selected = selected.filter((s) => s.id !== item.id);
+          if (statusEl.textContent === `Limit of ${max} reached.`) statusEl.textContent = "";
+          renderChips();
+          renderResults();
+        });
+        chip.append(h("span", item.name), rm);
+        return chip;
+      });
+      chipsBox.replaceChildren(...chips);
+    };
+
+    const renderResults = () => {
+      const btns = rows.map((r) => {
+        const id = r?.id;
+        const name = String(nameOf(r) ?? id ?? "");
+        const picked = selected.some((s) => s.id === id);
+        const btn = h("button", picked ? `${name} (added)` : name, { type: "button" });
+        btn.disabled = picked;
+        btn.addEventListener("click", () => {
+          const res = StoryWriterElement.togglePick(selected, { id, name }, max);
+          if (res.atLimit) {
+            statusEl.textContent = `Limit of ${max} reached.`;
+            return;
+          }
+          if (!res.added) return;
+          selected = res.selected;
+          renderChips();
+          renderResults();
+        });
+        return btn;
+      });
+      resultsBox.replaceChildren(...btns);
+      moreBox.replaceChildren(...(hasMore ? [moreBtn] : []));
+    };
+
+    const fetchPage = async (nextOffset) => {
+      const reqId = ++seq;
+      statusEl.textContent = "Searching…";
+      try {
+        const res = await api().get(StoryWriterElement.pickQuery(path, input.value, nextOffset, sort));
+        if (reqId !== seq) return;
+        if (!Array.isArray(res) && !Array.isArray(res?.items)) throw new Error("Invalid response");
+        if (!shown) {
+          shown = true;
+          wrap.hidden = false;
+          wrap.setAttribute("style", "display:grid;gap:6px");
+        }
+        const page = StoryWriterElement.unwrapPage(res);
+        const pageItems = page.items.slice(0, 20);
+        offset = nextOffset;
+        rows = nextOffset === 0 ? pageItems : [...rows, ...pageItems];
+        hasMore = page.hasMore;
+        statusEl.textContent = rows.length ? "" : "No matches.";
+        renderResults();
+      } catch (error) {
+        if (reqId !== seq) return;
+        if (!shown && hideOnFail) {
+          wrap.replaceChildren();
+          return;
+        }
+        statusEl.textContent = error?.message ?? String(error);
+      }
+    };
+
+    input.addEventListener("input", () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        fetchPage(0);
+      }, 300);
+    });
+    moreBtn.addEventListener("click", () => fetchPage(offset + 20));
+
+    wrap.append(labelEl, chipsBox, countEl, input, statusEl, resultsBox, moreBox);
+    fetchPage(0);
+    return {
+      nodes: [wrap],
+      value: () => selected.map((s) => s.id),
+    };
+  }
 
   connectedCallback() {
     this.load();
@@ -186,19 +321,15 @@ class StoryWriterElement extends HTMLElement {
   async openNewStoryForm() {
     this.stopPolling();
     this.clearTimers();
-    const [conns, chars, lorebooks] = await Promise.all([
-      api().get("/connections").catch(() => []),
-      api().get("/characters").catch(() => []),
-      api().get("/lorebooks").catch(() => null),
-    ]);
+    const conns = await api()
+      .get("/connections")
+      .catch(() => []);
     this.renderNewStoryForm({
       connections: StoryWriterElement.connections(conns),
-      characters: Array.isArray(chars) ? chars : [],
-      lorebooks: Array.isArray(lorebooks) ? lorebooks : null,
     });
   }
 
-  renderNewStoryForm({ connections = [], characters = [], lorebooks = null } = {}) {
+  renderNewStoryForm({ connections = [] } = {}) {
     const root = h("div", null, { style: "padding:24px;display:grid;gap:12px;max-width:560px" });
     const back = h("button", "Back", { type: "button" });
     back.addEventListener("click", () => this.load());
@@ -216,29 +347,19 @@ class StoryWriterElement extends HTMLElement {
     }
     conn.value = "";
 
-    const charBox = h("div", null, { style: "display:grid;gap:4px" });
-    const charChecks = [];
-    for (const c of Array.isArray(characters) ? characters : []) {
-      const cb = h("input", null, { type: "checkbox", value: c.id });
-      const item = h("label", null, { style: "display:flex;gap:6px;align-items:center" });
-      item.append(cb, h("span", StoryWriterElement.characterName(c)));
-      charBox.append(item);
-      charChecks.push(cb);
-    }
-
-    const loreChecks = [];
-    let loreNodes = [];
-    if (lorebooks !== null) {
-      const loreBox = h("div", null, { style: "display:grid;gap:4px" });
-      for (const l of lorebooks) {
-        const cb = h("input", null, { type: "checkbox", value: l.id });
-        const item = h("label", null, { style: "display:flex;gap:6px;align-items:center" });
-        item.append(cb, h("span", l.name || l.id));
-        loreBox.append(item);
-        loreChecks.push(cb);
-      }
-      loreNodes = [h("label", "Lorebooks"), loreBox];
-    }
+    const charPicker = StoryWriterElement.picker({
+      label: "Search characters",
+      path: "/characters",
+      nameOf: StoryWriterElement.characterName,
+      max: 20,
+      sort: "name-asc",
+    });
+    const lorePicker = StoryWriterElement.picker({
+      label: "Search lorebooks",
+      path: "/lorebooks",
+      nameOf: (l) => l?.name || l?.id || "",
+      max: 20,
+    });
 
     const style = StoryWriterElement.styleFields({ chapterWords: 2500, pointOfView: POVS[0], tense: "past" });
     const status = h("p", "");
@@ -251,9 +372,8 @@ class StoryWriterElement extends HTMLElement {
       premise,
       h("label", "Connection"),
       conn,
-      h("label", "Characters"),
-      charBox,
-      ...loreNodes,
+      ...charPicker.nodes,
+      ...lorePicker.nodes,
       ...style.nodes,
       submit,
       status,
@@ -265,9 +385,9 @@ class StoryWriterElement extends HTMLElement {
       if (!cleanTitle) return void (status.textContent = "Story title is required.");
       const cleanPremise = (premise.value ?? "").trim();
       if (cleanPremise.length > 2000) return void (status.textContent = "Premise must be at most 2000 characters.");
-      const characterIds = charChecks.filter((c) => c.checked).map((c) => c.value);
+      const characterIds = charPicker.value();
       if (characterIds.length > 20) return void (status.textContent = "Select at most 20 characters.");
-      const lorebookIds = loreChecks.filter((c) => c.checked).map((c) => c.value);
+      const lorebookIds = lorePicker.value();
       if (lorebookIds.length > 20) return void (status.textContent = "Select at most 20 lorebooks.");
 
       submit.disabled = true;

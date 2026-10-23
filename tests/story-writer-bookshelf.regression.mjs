@@ -191,4 +191,103 @@ const paragraphs = all(el)
 assert.ok(paragraphs.includes("Para one."));
 assert.ok(paragraphs.includes("Para two."));
 
+// (6) Picker statics: unwrapPage, pickQuery, togglePick
+assert.deepEqual(S.unwrapPage([{ id: "1" }]), { items: [{ id: "1" }], hasMore: false });
+assert.deepEqual(S.unwrapPage({ items: [{ id: "1" }], hasMore: true }), { items: [{ id: "1" }], hasMore: true });
+assert.deepEqual(S.unwrapPage({ items: [{ id: "1" }], hasMore: 0 }), { items: [{ id: "1" }], hasMore: false });
+assert.deepEqual(S.unwrapPage(null), { items: [], hasMore: false });
+assert.deepEqual(S.unwrapPage("junk"), { items: [], hasMore: false });
+assert.deepEqual(S.unwrapPage({ items: "nope", hasMore: true }), { items: [], hasMore: false });
+
+assert.equal(
+  S.pickQuery("/characters", "a b&c=d", 0, "name-asc"),
+  "/characters?search=a%20b%26c%3Dd&limit=20&offset=0&sort=name-asc",
+);
+assert.equal(S.pickQuery("/lorebooks", "café 雪", 20), "/lorebooks?search=caf%C3%A9%20%E9%9B%AA&limit=20&offset=20");
+assert.equal(S.pickQuery("/lorebooks", "", 0, ""), "/lorebooks?search=&limit=20&offset=0");
+
+const baseSel = Object.freeze([{ id: "c1", name: "Ada" }]);
+const addedRes = S.togglePick(baseSel, { id: "c2", name: "Bob" }, 2);
+assert.deepEqual(addedRes, {
+  selected: [
+    { id: "c1", name: "Ada" },
+    { id: "c2", name: "Bob" },
+  ],
+  added: true,
+  atLimit: false,
+});
+assert.deepEqual(baseSel, [{ id: "c1", name: "Ada" }]);
+const dupRes = S.togglePick(addedRes.selected, { id: "c1", name: "Ada" }, 2);
+assert.deepEqual(dupRes, { selected: addedRes.selected, added: false, atLimit: false });
+const limitInput = Object.freeze([...addedRes.selected]);
+const limitRes = S.togglePick(limitInput, { id: "c3", name: "Cid" }, 2);
+assert.deepEqual(limitRes, { selected: addedRes.selected, added: false, atLimit: true });
+
+// (7) New story form uses paged pickers (never bare /characters or /lorebooks) and escapes <img onerror>
+const formCalls = [];
+globalThis.__MARINARA_HOST__ = {
+  api: {
+    api: {
+      async get(path) {
+        formCalls.push(path);
+        if (path === "/connections") return [{ id: "conn:1", name: "Local", provider: "openai" }];
+        if (path === "/characters?search=&limit=20&offset=0&sort=name-asc") {
+          return {
+            items: [
+              { id: "char:evil", data: JSON.stringify({ name: evil }) },
+              { id: "char:ada", data: JSON.stringify({ name: "Ada" }) },
+            ],
+            hasMore: true,
+          };
+        }
+        if (path === "/characters?search=&limit=20&offset=20&sort=name-asc") {
+          return { items: [{ id: "char:bob", data: JSON.stringify({ name: "Bob" }) }], hasMore: false };
+        }
+        if (path === "/lorebooks?search=&limit=20&offset=0") {
+          return { items: [{ id: "lore:1", name: "World Lore" }], hasMore: false };
+        }
+        throw new Error(`Unexpected GET ${path}`);
+      },
+    },
+  },
+};
+
+await el.openNewStoryForm();
+await new Promise((r) => setTimeout(r, 0));
+
+assert.ok(!formCalls.includes("/characters"));
+assert.ok(!formCalls.includes("/lorebooks"));
+assert.deepEqual(formCalls, [
+  "/connections",
+  "/characters?search=&limit=20&offset=0&sort=name-asc",
+  "/lorebooks?search=&limit=20&offset=0",
+]);
+
+const formNodes = all(el);
+assert.ok(!formNodes.some((n) => n.tag === "img"));
+assert.ok(formNodes.some((n) => n.tag === "button" && n.textContent === evil));
+
+// Selecting a row adds a chip above the search box and marks the row "(added)"
+all(el)
+  .find((n) => n.tag === "button" && n.textContent === "Ada")
+  .listeners.click();
+assert.ok(treeText(el).includes("1 of 20 selected"));
+assert.ok(all(el).some((n) => n.tag === "button" && n.textContent === "Ada (added)" && n.disabled === true));
+assert.ok(all(el).some((n) => n.tag === "button" && n.attrs["aria-label"] === "Remove Ada"));
+
+// Load more appends next page (offset += 20)
+all(el)
+  .find((n) => n.tag === "button" && n.textContent === "Load more")
+  .listeners.click();
+await new Promise((r) => setTimeout(r, 0));
+assert.ok(formCalls.includes("/characters?search=&limit=20&offset=20&sort=name-asc"));
+assert.ok(all(el).some((n) => n.tag === "button" && n.textContent === "Bob"));
+
+// Removing chip re-enables row
+all(el)
+  .find((n) => n.tag === "button" && n.attrs["aria-label"] === "Remove Ada")
+  .listeners.click();
+assert.ok(treeText(el).includes("0 of 20 selected"));
+assert.ok(all(el).some((n) => n.tag === "button" && n.textContent === "Ada" && !n.disabled));
+
 console.log("story-writer bookshelf ok");
