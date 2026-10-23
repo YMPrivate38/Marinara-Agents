@@ -8,6 +8,15 @@ const TWISTS = [
   ["free", "Free"],
 ];
 const LISTS = ["outline", "secrets", "offscreen", "threads", "twists"];
+const TRACKER_TYPES = [
+  "character-tracker",
+  "world-state",
+  "quest",
+  "persona-stats",
+  "relationship-tracker",
+  "custom-tracker",
+  "inventory-tracker",
+];
 const PHASES = {
   writing: "Writing",
   checking: "Checking the characters",
@@ -76,16 +85,31 @@ const clampInt = (v, lo, hi, d) =>
     ? Math.min(hi, Math.max(lo, Math.round(Number(v))))
     : d;
 
+const str = (v, n) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+
+const normalizeAgents = (v) =>
+  (Array.isArray(v) ? v : [])
+    .map((a) => ({
+      type: str(a?.type, 100),
+      name: str(a?.name, 100),
+      kind: a?.kind === "tracker" ? "tracker" : "rewrite",
+      prompt: str(a?.prompt, 12000),
+      minScore: clampInt(a?.minScore || undefined, 1, 10, 7),
+    }))
+    .filter((a) => a.type && a.prompt)
+    .slice(0, 5);
+
 const normalizeSettings = (raw) => {
   const s = raw && typeof raw === "object" ? raw : {};
   return {
     twists: ["none", "rare", "free"].includes(s.twists) ? s.twists : "rare",
-    presetName: typeof s.presetName === "string" ? s.presetName.trim().slice(0, 200) : "",
-    presetText: typeof s.presetText === "string" ? s.presetText.trim().slice(0, 6000) : "",
-    intro: typeof s.intro === "string" ? s.intro.trim().slice(0, 4000) : "",
+    presetName: str(s.presetName, 200),
+    presetText: str(s.presetText, 6000),
+    intro: str(s.intro, 4000),
     checker: s.checker !== false,
     minScore: clampInt(s.minScore, 1, 10, 7),
     maxRetries: clampInt(s.maxRetries, 0, 3, 2),
+    agents: normalizeAgents(s.agents),
   };
 };
 
@@ -275,6 +299,117 @@ class StoryWriterElement extends HTMLElement {
         minScore: clampInt(minScore.value, 1, 10, 7),
         maxRetries: clampInt(maxRetries.value, 0, 3, 2),
       }),
+    };
+  }
+  static agentKind(cfg) {
+    if (cfg?.phase === "post_processing" && cfg?.settings?.resultType === "text_rewrite") return "rewrite";
+    if (TRACKER_TYPES.includes(cfg?.type)) return "tracker";
+    return null;
+  }
+  static agentPicker(currentAgents = []) {
+    const stored = (Array.isArray(currentAgents) ? currentAgents : [])
+      .filter((a) => a && typeof a.type === "string" && a.type.trim())
+      .slice(0, 5);
+    const checked = new Set(stored.map((a) => a.type));
+    const wrap = h("div", null, { className: "sw-stack", style: "display:none" });
+    wrap.hidden = true;
+    let eligible = [];
+
+    (async () => {
+      try {
+        const rows = await api().get("/agents");
+        eligible = (Array.isArray(rows) ? rows : []).filter((c) => StoryWriterElement.agentKind(c) !== null);
+        if (!eligible.length) {
+          wrap.hidden = true;
+          wrap.setAttribute("style", "display:none");
+          wrap.replaceChildren();
+          return;
+        }
+        wrap.hidden = false;
+        wrap.setAttribute("style", "display:grid;gap:6px");
+        const fanficHint = h("p", "", { className: "sw-muted" });
+        const boxes = [];
+        const sync = () => {
+          const atMax = checked.size >= 5;
+          for (const { cfg, box } of boxes) {
+            const isOn = checked.has(cfg.type);
+            box.checked = isOn;
+            box.disabled = !isOn && atMax;
+          }
+          const hasFanfic = checked.has("fanfic-writer");
+          fanficHint.textContent = hasFanfic ? "Replaces the built-in out-of-character check" : "";
+          fanficHint.hidden = !hasFanfic;
+        };
+        const items = eligible.map((cfg) => {
+          const kind = StoryWriterElement.agentKind(cfg);
+          const isOn = checked.has(cfg.type);
+          const box = h("input", null, {
+            type: "checkbox",
+            value: cfg.type,
+            ...(isOn ? { checked: "checked" } : {}),
+          });
+          box.checked = isOn;
+          box.addEventListener("change", () => {
+            const wasOn = checked.has(cfg.type);
+            const wantOn = typeof box.checked === "boolean" && box.checked !== wasOn ? box.checked : !wasOn;
+            if (wantOn) {
+              if (checked.size >= 5) {
+                box.checked = false;
+                return;
+              }
+              checked.add(cfg.type);
+            } else {
+              checked.delete(cfg.type);
+            }
+            sync();
+          });
+          boxes.push({ cfg, box });
+          const row = h("div", null, { className: "sw-stack", style: "display:grid;gap:2px" });
+          const lbl = h("label", null);
+          lbl.append(
+            box,
+            h("span", cfg.name || cfg.type || ""),
+            h("span", kind === "tracker" ? "keeps notes for the next chapter" : "rewrites the chapter", {
+              className: "sw-muted",
+            }),
+          );
+          row.append(lbl);
+          if (cfg.description) {
+            row.append(h("p", String(cfg.description), { className: "sw-muted" }));
+          }
+          return row;
+        });
+        sync();
+        wrap.replaceChildren(h("label", "Agents run after each chapter"), ...items, fanficHint);
+      } catch {
+        eligible = [];
+        wrap.hidden = true;
+        wrap.setAttribute("style", "display:none");
+        wrap.replaceChildren();
+      }
+    })();
+
+    return {
+      nodes: [wrap],
+      value: () => {
+        const out = [];
+        for (const cfg of eligible) {
+          if (!checked.has(cfg.type)) continue;
+          out.push({
+            type: cfg.type,
+            name: cfg.name,
+            kind: StoryWriterElement.agentKind(cfg),
+            prompt: cfg.promptTemplate,
+            minScore: Number(cfg.settings?.minScore) || 7,
+          });
+        }
+        for (const s of stored) {
+          if (checked.has(s.type) && !eligible.some((c) => c.type === s.type)) {
+            out.push(s);
+          }
+        }
+        return out.slice(0, 5);
+      },
     };
   }
   static picker({ label, path, nameOf = (r) => r?.name || r?.id || "", max = 20, sort = "", onChange = null } = {}) {
@@ -636,6 +771,7 @@ class StoryWriterElement extends HTMLElement {
     });
 
     const author = StoryWriterElement.authorFields();
+    const agents = StoryWriterElement.agentPicker();
     const advanced = h("details", null, { className: "sw-advanced", open: "" });
     advanced.open = true;
     advanced.append(
@@ -645,6 +781,7 @@ class StoryWriterElement extends HTMLElement {
       introInput,
       startWrap,
       ...author.nodes,
+      ...agents.nodes,
     );
 
     const style = StoryWriterElement.styleFields({ chapterWords: 2500, pointOfView: POVS[0], tense: "past" });
@@ -685,6 +822,7 @@ class StoryWriterElement extends HTMLElement {
           presetName,
           presetText,
           intro: (introInput.value ?? "").slice(0, 4000),
+          agents: agents.value(),
         });
         const res = await api().post("/story-writer/stories", {
           title: cleanTitle,
@@ -878,6 +1016,7 @@ class StoryWriterElement extends HTMLElement {
     const details = h("details", null, { className: "sw-settings" });
     details.open = false;
     const author = StoryWriterElement.authorFields(cur);
+    const agents = StoryWriterElement.agentPicker(cur.agents);
     const presetLabel = h("label", "Prompt preset");
     const presetValue = h("p", cur.presetName || "No preset", { className: "sw-muted" });
     const styleGuide = h("textarea", cur.presetText, { rows: "4" });
@@ -895,6 +1034,7 @@ class StoryWriterElement extends HTMLElement {
         presetName: cur.presetName,
         presetText: styleGuide.value ?? "",
         intro: showIntro ? (introArea.value ?? "").slice(0, 4000) : cur.intro,
+        agents: agents.value(),
       });
       saveBtn.disabled = true;
       msg.textContent = "";
@@ -912,6 +1052,7 @@ class StoryWriterElement extends HTMLElement {
     details.append(
       h("summary", "Author controls"),
       ...author.nodes,
+      ...agents.nodes,
       presetLabel,
       presetValue,
       h("label", "Style guide"),

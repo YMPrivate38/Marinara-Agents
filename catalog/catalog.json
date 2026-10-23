@@ -3713,7 +3713,7 @@
         },
         "id": "story-writer",
         "name": "Story Writer",
-        "version": "0.8.0",
+        "version": "0.9.0",
         "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer.",
         "engine": {
           "min": "2.5.0",
@@ -3750,8 +3750,8 @@
           },
           {
             "path": "client.js",
-            "sha256": "97a5cd34fd738ddbd0fb1b0f778b21abfa5d51efa3a5381413a818ecc8c72899",
-            "bytes": 45328
+            "sha256": "b30b36d493d7098b48361e0b25df39b83e131c1a5a4da6335e8e07a147835c59",
+            "bytes": 50057
           },
           {
             "path": "epub.mjs",
@@ -3760,8 +3760,8 @@
           },
           {
             "path": "plan.mjs",
-            "sha256": "0e58fb1e3e063d1aa1f65c25a8892f74de843f5402ce6a39365ad5d268845487",
-            "bytes": 3836
+            "sha256": "1e2ef9c836320fcde15d5c7002131950a104ee0c63ec6f47fda326172d213d8c",
+            "bytes": 4346
           },
           {
             "path": "server.mjs",
@@ -3770,16 +3770,16 @@
           },
           {
             "path": "pipeline.mjs",
-            "sha256": "fb8c7c8fc8481f7762b24941baf967489fcc9d9cc364cacba93242f0120b714b",
-            "bytes": 21757
+            "sha256": "af3ed1c6a55e7c6df4a95db79c7a86972467fd2dea6caf13018a916a3ddb45e2",
+            "bytes": 24965
           }
         ]
       },
       "category": "misc",
       "artifact": {
-        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/story-writer-0.8.0.zip",
-        "sha256": "ebc1054e926b0a143e33ad42d146cccaa5342f26f4f7b62095bc9aba027c6075",
-        "bytes": 93501
+        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/story-writer-0.9.0.zip",
+        "sha256": "b6a5edb26238668edec5ccd95207e77577f1acad576873d3d658cee6044338fe",
+        "bytes": 101948
       },
       "documentationUrl": "https://github.com/YMPrivate38/Marinara-Agents/blob/main/packages/story-writer/README.md"
     },

@@ -87,6 +87,35 @@ export function applyMacros(text, { char, user }) {
   return String(text ?? "").replace(/\{\{\s*(char|user)\s*\}\}/gi, (_, k) => (k.toLowerCase() === "char" ? char : user));
 }
 
+const AGENT_CHAPTER_CAP = 40000;
+
+export function agentMessages(agent, { characters, chapterText, previous, settings }) {
+  const names = (Array.isArray(characters) ? characters : []).map((r) => cardFields(r).name).filter(Boolean).join(" and ") || "the characters";
+  const system = applyMacros(agent.prompt, { char: names, user: "the reader" }).replace(/\{\{\s*minScore\s*\}\}/gi, String(agent.minScore ?? settings?.minScore ?? 7));
+  const parts = [`<characters>\n${formatCharacters(characters) || "None"}\n</characters>`];
+  if (agent.kind === "tracker" && previous) parts.push(`<current_tracker_state>\n${String(previous).slice(0, 6000)}\n</current_tracker_state>`);
+  parts.push(`<assistant_response>\n${String(chapterText ?? "").slice(0, AGENT_CHAPTER_CAP)}\n</assistant_response>`);
+  return [
+    { role: "system", content: `${system}\nThe text to check is a chapter of a prose story, not a roleplay message.` },
+    { role: "user", content: parts.join("\n\n") },
+  ];
+}
+
+// An edit is accepted only when it is a real replacement of similar size, never a diff or excerpt.
+export function parseRewrite(parsed, original) {
+  if (!parsed || typeof parsed !== "object" || parsed.editNeeded !== true) return null;
+  const text = str(parsed.editedText, AGENT_CHAPTER_CAP * 2);
+  if (!text || text.length < String(original ?? "").length * 0.5) return null;
+  const changes = (Array.isArray(parsed.changes) ? parsed.changes : []).map((c) => str(c?.description ?? c, 200)).filter(Boolean).slice(0, 10);
+  return { text, changes };
+}
+
+export function trackerNotes(previousChapters) {
+  const last = Array.isArray(previousChapters) && previousChapters.length ? previousChapters[previousChapters.length - 1] : null;
+  const t = last?.trackers && typeof last.trackers === "object" ? last.trackers : {};
+  return Object.entries(t).map(([name, text]) => `${name}:\n${String(text).slice(0, 3000)}`).join("\n\n");
+}
+
 export function buildWriterMessages({ story, plan, characters, lorebookEntries, previousChapters, nudge, n, critique }) {
   const { beat, style } = normalizePlan(plan);
   const settings = normalizeSettings(story?.settings ?? story?.data?.settings);
@@ -110,6 +139,8 @@ export function buildWriterMessages({ story, plan, characters, lorebookEntries, 
   if (loreBlock) sys.push(`Lorebook (canon):\n${loreBlock}`);
   const isFirst = !previousChapters?.length;
   if (isFirst && settings.intro) sys.push(`Opening to build on (canon; begin the story from here, do not repeat it word for word):\n${settings.intro}`);
+  const notes = trackerNotes(previousChapters);
+  if (notes) sys.push(`Tracker notes (read-only reference, current as of the last chapter):\n${notes}`);
   const historyBlock = formatHistory(previousChapters);
   if (historyBlock) sys.push(historyBlock);
   if (beat) sys.push(`What must happen in this chapter:\n${beat}`);
@@ -263,6 +294,8 @@ export async function writeChapter({
     storyData.chapterCount = storyDoc.data.chapterCount;
   }
   const settings = normalizeSettings(storyData.settings);
+  // The Fanfic Writer agent is the same check, so the built-in one steps aside for it.
+  if (settings.agents.some((a) => a.type === "fanfic-writer")) settings.checker = false;
   const minScore = minScoreArg ?? settings.minScore;
   const maxRetries = maxRetriesArg ?? settings.maxRetries;
   const n = (Number.isInteger(storyData.chapterCount) ? storyData.chapterCount : 0) + 1;
@@ -347,6 +380,31 @@ export async function writeChapter({
     critique = critiqueText(check);
   }
 
+  const trackers = {};
+  const agentNotes = [];
+  for (const agent of settings.agents) {
+    checkAbort(signal);
+    onStatus("checking");
+    try {
+      const raw = await llm.complete(
+        agentMessages(agent, { characters, chapterText: best.text, previous: trackerNotes(previousChapters), settings }),
+        { temperature: 0.2, maxTokens: agent.kind === "tracker" ? 2000 : maxTokens, signal },
+      );
+      if (agent.kind === "tracker") {
+        const out = String(raw ?? "").trim();
+        if (out) trackers[agent.name || agent.type] = out.slice(0, 3000);
+      } else {
+        const edit = parseRewrite(parseJsonish(String(raw ?? "")), best.text);
+        if (edit) {
+          best = { ...best, text: edit.text };
+          agentNotes.push(...edit.changes.map((c) => `${agent.name || agent.type}: ${c}`));
+        }
+      }
+    } catch (err) {
+      if (err?.name === "AbortError" || signal?.aborted) throw err;
+    }
+  }
+
   checkAbort(signal);
   onStatus("planning");
   let step = null;
@@ -378,6 +436,8 @@ export async function writeChapter({
     blurb,
     scores: best.scores,
     attempts,
+    trackers,
+    agentNotes,
     createdAt,
   };
 

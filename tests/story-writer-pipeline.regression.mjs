@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import {
+  agentMessages,
   applyMacros,
+  parseRewrite,
+  trackerNotes,
   buildWriterMessages,
   cardFields,
   chapterId,
@@ -634,6 +637,40 @@ assert.equal(stepMessages({ plan: { beat: "B" }, chapterText: "Hi", n: 1 }).leng
   const llm = { async complete() { calls++; return calls === 1 ? "Chapter text." : '{"title":"T","summary":"s","blurb":"b","beat":"next"}'; } };
   await writeChapter({ story, deps: { documents, resources: {}, llm, parseJsonish: JSON.parse } });
   assert.equal(calls, 2);
+}
+
+// agents: rewrite replaces text, fanfic-writer replaces the built-in check, tracker output feeds the next prompt
+{
+  assert.equal(parseRewrite({ editNeeded: true, editedText: "short" }, "x".repeat(100)), null);
+  assert.equal(parseRewrite({ editNeeded: false, editedText: "y".repeat(100) }, "x".repeat(100)), null);
+  assert.deepEqual(parseRewrite({ editNeeded: true, editedText: "y".repeat(100), changes: [{ description: "fix" }] }, "x".repeat(100)).changes, ["fix"]);
+  const msgs = agentMessages({ prompt: "Min {{minScore}} for {{char}}", kind: "rewrite", minScore: 6 }, { characters: [{ data: { name: "Bo" } }], chapterText: "CH" });
+  assert.ok(msgs[0].content.includes("Min 6 for Bo") && msgs[1].content.includes("<assistant_response>\nCH"));
+  assert.equal(trackerNotes([{ trackers: { Quest: "Q1" } }]), "Quest:\nQ1");
+
+  const documents = makeDocuments();
+  const agents = [
+    { type: "fanfic-writer", name: "Fanfic Writer", kind: "rewrite", prompt: "REWRITER" },
+    { type: "world-state", name: "World", kind: "tracker", prompt: "TRACKER" },
+  ];
+  const story = await seedStory(documents, "story:agents", {}, { settings: { agents } });
+  const calls = [];
+  const llm = {
+    async complete(messages) {
+      const sys = messages[0].content;
+      calls.push(sys.slice(0, 8));
+      if (sys.startsWith("REWRITER")) return JSON.stringify({ editNeeded: true, editedText: "EDITED ".repeat(10), changes: [{ description: "ooc" }] });
+      if (sys.startsWith("TRACKER")) return '{"place":"inn"}';
+      if (sys.includes("hidden author")) return '{"title":"T","summary":"s","blurb":"b","beat":"next"}';
+      return "A chapter of reasonable length. ".repeat(4);
+    },
+  };
+  await writeChapter({ story, deps: { documents, resources: {}, llm, parseJsonish: JSON.parse } });
+  assert.ok(!calls.some((c) => c.startsWith("You are a")), "built-in checker skipped");
+  const ch = (await documents.getById(PACKAGE_ID, chapterId("story:agents", 1))).data;
+  assert.ok(ch.text.startsWith("EDITED"));
+  assert.deepEqual(ch.trackers, { World: '{"place":"inn"}' });
+  assert.deepEqual(ch.agentNotes, ["Fanfic Writer: ooc"]);
 }
 
 console.log("story-writer pipeline ok");
