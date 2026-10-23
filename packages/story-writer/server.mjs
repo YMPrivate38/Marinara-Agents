@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { buildEpub, chaptersFromMessages } from "./epub.mjs";
+import { buildEpub, chaptersFromDocs } from "./epub.mjs";
 import { chapterId, JobRunner, storyView, writeChapter } from "./pipeline.mjs";
-import { createAgentRuntime, createContributor, normalizePlan, normalizeStyle, PACKAGE_ID, readPlan, writePlan } from "./plan.mjs";
+import { normalizePlan, normalizeStyle, PACKAGE_ID, readPlan, writePlan } from "./plan.mjs";
 
 const PLAN_PROMPT = `You are the hidden author of a serial story. From the premise, plan it. Return ONLY JSON, no prose:
 {"outline":["chapter-level beats"],"secrets":["facts the reader does not know yet"],"twists":[{"text":"...","reveal":"chapter hint or null"}],"offscreen":["what characters do out of sight"],"threads":["open plot threads"],"beat":"what happens in chapter 1"}
@@ -10,24 +10,13 @@ Keep every item to one sentence.`;
 const TIMEOUT_MESSAGE =
   "The model call timed out. Raise AGENT_CALL_TIMEOUT_MS in the Engine .env or lower the chapter length.";
 
-const meta = (c) => {
-  try {
-    return typeof c.metadata === "string" ? JSON.parse(c.metadata) : c.metadata ?? {};
-  } catch {
-    return {};
-  }
-};
-
 const validIdArray = (v) =>
   Array.isArray(v) && v.length <= 20 && v.every((x) => typeof x === "string" && x.trim().length >= 1 && x.trim().length <= 100);
 
 export async function activate({ api }) {
   const { persistence, languageModels, resources, json } = api.runtime;
   const { documents } = persistence;
-  const cleanups = [
-    api.registerPromptContext(createContributor(documents)),
-    api.registerService("agent-runtime:story-writer", createAgentRuntime(documents, (raw) => json.parseJsonish(raw))),
-  ];
+  const cleanups = [];
 
   const makeLlm = (story) => ({
     async complete(messages, { temperature, maxTokens, signal }) {
@@ -69,19 +58,23 @@ export async function activate({ api }) {
     },
   });
 
-  const chatStory = async (request, reply) => {
-    const chat = await persistence.getChat(request.params.chatId);
-    if (!chat || meta(chat).storyWriter !== true) return void reply.code(404).send({ error: "Story not found" });
-    return chat;
-  };
-
   const docStory = async (request, reply) => {
     const doc = await documents.getById(PACKAGE_ID, request.params.id);
     if (!doc || doc.kind !== "story") return void reply.code(404).send({ error: "Story not found" });
     return doc;
   };
 
-  const createPlan = async ({ storyId, premise, style, connectionId, chatConnectionId }) => {
+  const loadChapters = async (doc) => {
+    const count = Number.isInteger(doc.data?.chapterCount) ? doc.data.chapterCount : 0;
+    const chapters = [];
+    for (let n = 1; n <= count; n++) {
+      const ch = await documents.getById(PACKAGE_ID, chapterId(doc.id, n));
+      if (ch?.data) chapters.push(ch.data);
+    }
+    return chapters;
+  };
+
+  const createPlan = async ({ storyId, premise, style, connectionId }) => {
     const cleanPremise = typeof premise === "string" ? premise.trim().slice(0, 2000) : "";
     const existing = await readPlan(documents, storyId);
     const nextStyle = normalizeStyle(style ?? existing?.data?.style);
@@ -91,7 +84,6 @@ export async function activate({ api }) {
     }
     const model = await languageModels.resolveForRequest({
       connectionId: connectionId ?? undefined,
-      chatConnectionId: chatConnectionId ?? null,
     });
     const out = await model.chatComplete(
       [{ role: "system", content: PLAN_PROMPT }, { role: "user", content: cleanPremise }],
@@ -102,18 +94,18 @@ export async function activate({ api }) {
   };
 
   const view = (doc) => ({ plan: doc ? normalizePlan(doc.data) : null, revision: doc?.revision ?? null });
-  const getPlan = async (targetId) => view(await readPlan(documents, targetId));
-  const putPlan = async (targetId, request, reply) => {
-    const existing = await readPlan(documents, targetId);
+  const getPlan = async (storyId) => view(await readPlan(documents, storyId));
+  const putPlan = async (storyId, request, reply) => {
+    const existing = await readPlan(documents, storyId);
     const plan = { ...normalizePlan(request.body?.plan), chapter: normalizePlan(existing?.data).chapter };
-    const saved = await writePlan(documents, targetId, plan, Number.isInteger(request.body?.revision) ? request.body.revision : -1);
+    const saved = await writePlan(documents, storyId, plan, Number.isInteger(request.body?.revision) ? request.body.revision : -1);
     return saved ? view(saved) : reply.code(409).send({ error: "The plan changed; reload it and try again" });
   };
-  const postPlan = async (targetId, connOpts, request, reply) => {
+  const postPlan = async (doc, request, reply) => {
     const premise = typeof request.body?.premise === "string" ? request.body.premise.trim().slice(0, 2000) : "";
     if (!premise && !request.body?.style) return reply.code(400).send({ error: "A premise is required" });
     try {
-      return view(await createPlan({ storyId: targetId, premise, style: request.body?.style, ...connOpts }));
+      return view(await createPlan({ storyId: doc.id, premise, style: request.body?.style, connectionId: doc.data?.connectionId ?? null }));
     } catch (error) {
       return reply.code(502).send({ error: `Could not generate the plan: ${error?.message ?? error}` });
     }
@@ -121,32 +113,18 @@ export async function activate({ api }) {
 
   const cleanupRoutes = await api.registerPrivilegedRoutes(
     async (app) => {
-      app.get("/epub/:chatId", async (request, reply) => {
-        const chat = await persistence.getChat(request.params.chatId);
-        // Only stories are exportable; other chats stay unreachable through this route.
-        if (!chat || meta(chat).storyWriter !== true) return reply.code(404).send({ error: "Story not found" });
-        const chapters = chaptersFromMessages(await persistence.listMessages(chat.id));
+      app.get("/epub/:id", async (request, reply) => {
+        const doc = await docStory(request, reply);
+        if (!doc) return;
+        const chapters = chaptersFromDocs(await loadChapters(doc));
         if (!chapters.length) return reply.code(409).send({ error: "This story has no chapters yet" });
-        const title = chat.name || "Story";
+        const title = doc.data?.title || doc.name || "Story";
         const ascii = title.replace(/[^A-Za-z0-9._ -]/g, "_").trim() || "story";
         const utf8 = encodeURIComponent(title).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
         return reply
           .header("Content-Type", "application/epub+zip")
           .header("Content-Disposition", `attachment; filename="${ascii}.epub"; filename*=UTF-8''${utf8}.epub`)
-          .send(buildEpub({ id: chat.id, title, chapters }));
-      });
-
-      app.get("/plan/:chatId", async (request, reply) => {
-        const chat = await chatStory(request, reply);
-        if (chat) return getPlan(chat.id);
-      });
-      app.put("/plan/:chatId", async (request, reply) => {
-        const chat = await chatStory(request, reply);
-        if (chat) return putPlan(chat.id, request, reply);
-      });
-      app.post("/plan/:chatId", async (request, reply) => {
-        const chat = await chatStory(request, reply);
-        if (chat) return postPlan(chat.id, { chatConnectionId: chat.connectionId ?? null }, request, reply);
+          .send(buildEpub({ id: doc.id, title, chapters }));
       });
 
       app.get("/stories", async () => {
@@ -213,13 +191,7 @@ export async function activate({ api }) {
       app.get("/stories/:id", async (request, reply) => {
         const doc = await docStory(request, reply);
         if (!doc) return;
-        const count = Number.isInteger(doc.data?.chapterCount) ? doc.data.chapterCount : 0;
-        const chapters = [];
-        for (let n = 1; n <= count; n++) {
-          const ch = await documents.getById(PACKAGE_ID, chapterId(doc.id, n));
-          if (ch?.data) chapters.push(ch.data);
-        }
-        return storyView(doc, chapters);
+        return storyView(doc, await loadChapters(doc));
       });
 
       app.get("/stories/:id/chapters/:n", async (request, reply) => {
@@ -264,7 +236,7 @@ export async function activate({ api }) {
       });
       app.post("/stories/:id/plan", async (request, reply) => {
         const doc = await docStory(request, reply);
-        if (doc) return postPlan(doc.id, { connectionId: doc.data?.connectionId ?? null }, request, reply);
+        if (doc) return postPlan(doc, request, reply);
       });
 
       app.post("/stories/:id/write", async (request, reply) => {

@@ -1,11 +1,11 @@
 # Story Writer
 
-Serial fiction written in chapters. Install it from Agents → Download Agents, restart Marinara Engine when prompted, then open Home → Story Writer.
+Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer.
 
-0.1.0 adds the bookshelf: your stories, an Open button for each, and a New story form (title, connection, optional character). 0.2.0 adds Export EPUB on each story. 
+- **New story:** a title, an optional premise, optional characters and lorebooks, a connection, and how long each chapter is (words), the point of view and the tense.
+- **Write next chapter**, or write up to 20 in a row. For each chapter Story Writer writes it, checks the characters stay in character and the events make sense, rewrites it when they do not (up to twice), then updates its hidden plan and picks what happens next.
+- **Hidden plan:** outline, secrets, twists, offscreen activity and open threads. The writer is only ever told the next beat. The plan stays hidden until you press Reveal spoilers.
+- **Chapter list:** each chapter shows a spoiler-free teaser. Read a chapter in the page.
+- **Export EPUB** for your e-reader.
 
-0.3.0 adds a hidden plan. Give a story a premise and Story Writer drafts an outline, secrets, twists, offscreen events, open threads and the first beat. After every chapter the Story Plan Keeper agent (added to each new story) updates the plan and writes the next beat. The writer only ever receives that one beat, never the rest, so twists stay surprises. Press Plan on a story to see it: spoilers are hidden until you press Reveal spoilers, and you can edit, save, or regenerate the plan. Stories created before 0.3.0 can add Story Plan Keeper in Chat Settings and use Generate plan.
-
-0.4.0 moves the chapter settings here: chapter length (300-8000 words, default 2500), point of view and tense are set when you create a story and can be changed in its Plan panel (they stay visible while spoilers are hidden). Each reply is asked to be one complete chapter in that style, continuing where the last one ended and stopping at a natural break. New stories also get Fanfic Writer, which checks replies for out-of-character writing and things that don't make sense, and rewrites them if needed.
-
-Stories are now books of chapters kept by Story Writer itself (no chat). The server routes under /api/story-writer/stories create a story, write chapters in the background, and report progress.
+One model call is limited by the Engine's `AGENT_CALL_TIMEOUT_MS` (5 minutes by default). If a long chapter times out, raise it in the Engine's `.env` or shorten the chapter.

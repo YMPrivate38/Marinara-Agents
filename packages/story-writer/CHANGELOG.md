@@ -1,3 +1,7 @@
+## 0.7.0 — 2026-10-22
+- Changed: Export EPUB now builds the book from your story's chapters. Story Writer no longer touches your chats, and it no longer asks for permission to read chats, add prompt text or run agents.
+- Removed: the old Story Plan Keeper agent. The plan is now updated by Story Writer itself after each chapter.
+
 ## 0.6.0 — 2026-10-22
 - Changed: Story Writer is now a reader instead of a chat. Pick a story from your shelf, press Write next chapter (or write up to 20 in a row), watch the progress, and read the chapters here. Each chapter in the list shows a spoiler-free teaser. The hidden plan stays hidden until you press Reveal spoilers.
 

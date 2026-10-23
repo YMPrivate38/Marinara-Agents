@@ -3,20 +3,31 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildEpub, chaptersFromMessages, crc32 } from "../packages/story-writer/epub.mjs";
+import { buildEpub, chaptersFromDocs, crc32 } from "../packages/story-writer/epub.mjs";
 
-const msgs = [
-  { role: "system", content: "SYSTEM SECRET" },
-  { role: "user", content: "USER SECRET" },
-  { role: "assistant", content: "# The *Start* & \"End\"\n\nHe said <script>alert(1)</script> & **bold** and *it*.\nNext line.\n\n---\n\nAfter." },
-  { role: "assistant", content: "   " },
-  { role: "assistant", content: "No heading here." },
+const docs = [
+  {
+    n: 1,
+    title: '  The *Start* & "End"  ',
+    text: "# Duplicate Heading\n\nHe said <script>alert(1)</script> & **bold** and *it*.\nNext line.\n\n---\n\nAfter.",
+  },
+  { n: 2, title: "Empty Chapter", text: "   " },
+  { n: 3, title: "   ", text: "No heading here." },
 ];
-const chapters = chaptersFromMessages(msgs);
-assert.deepEqual(chapters.map((c) => c.title), ["The *Start* & \"End\"", "Chapter 2"]);
-assert.ok(!JSON.stringify(chapters).includes("SECRET"));
+const chapters = chaptersFromDocs(docs);
+assert.deepEqual(
+  chapters.map((c) => c.title),
+  ['The *Start* & "End"', "Chapter 3"],
+);
+assert.ok(!chapters[0].body.includes("Duplicate Heading") && chapters[0].body.startsWith("He said"));
+assert.equal(chapters[1].body, "No heading here.");
 
-const buf = buildEpub({ id: "123e4567-e89b-12d3-a456-426614174000", title: 'T & <"x">', chapters, modified: new Date("2026-10-22T01:02:03.456Z") });
+const buf = buildEpub({
+  id: "story:123e4567-e89b-12d3-a456-426614174000",
+  title: 'T & <"x">',
+  chapters,
+  modified: new Date("2026-10-22T01:02:03.456Z"),
+});
 
 // Parse the zip independently from the central directory.
 const eocd = buf.length - 22;
