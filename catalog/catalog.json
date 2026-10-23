@@ -3713,7 +3713,7 @@
         },
         "id": "story-writer",
         "name": "Story Writer",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer.",
         "engine": {
           "min": "2.5.0",
@@ -3768,16 +3768,21 @@
           },
           {
             "path": "server.mjs",
-            "sha256": "2d291cb7bf675318e4adaae76ebf1e3137bd4a4a05396ed78008a3b120d1a77b",
-            "bytes": 4844
+            "sha256": "2f0d517827ed800115f4e0eae7044a50de593752c9674b41c31d0a89f4c9a6b8",
+            "bytes": 14061
+          },
+          {
+            "path": "pipeline.mjs",
+            "sha256": "cb882907425f5ac1b6168f3bdee79eedf54f42edf5494cf261be7b1870557279",
+            "bytes": 18841
           }
         ]
       },
       "category": "misc",
       "artifact": {
-        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/story-writer-0.4.0.zip",
-        "sha256": "f6141cc01bb697971307111690d1fcbba0835765f082c847ef5b3bd75da7ddd2",
-        "bytes": 29833
+        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/story-writer-0.5.0.zip",
+        "sha256": "11ef82d0b18562bd0f88530b332bf99e86c67bb4a055ca92adb32c5ac24a662d",
+        "bytes": 58140
       },
       "documentationUrl": "https://github.com/YMPrivate38/Marinara-Agents/blob/main/packages/story-writer/README.md"
     },
