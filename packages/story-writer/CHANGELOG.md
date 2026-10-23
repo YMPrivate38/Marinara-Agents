@@ -1,3 +1,6 @@
+## 0.5.0 — 2026-10-22
+- Added: stories no longer need a chat. The server can now write a story chapter by chapter on its own (one chapter or up to 20 in a row), check each chapter for out-of-character writing and nonsense and rewrite it when it is bad, and update the hidden plan and the next beat. Each chapter also gets a spoiler-free teaser. The screens for this come in the next update.
+
 ## 0.4.0 — 2026-10-22
 - Added: The New story form and the Plan panel now set chapter length (300-8000 words), point of view and tense. Every reply in a story is asked to be one complete chapter in that style, ending on a natural chapter break, with no extra model call. These settings are not spoilers, so the Plan panel shows them even while spoilers are hidden.
 - Changed: Fanfic Writer is now the checker for out-of-character writing, so new stories get it as a quality check instead of a chapter planner.
