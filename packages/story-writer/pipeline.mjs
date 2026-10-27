@@ -132,8 +132,11 @@ export function buildWriterMessages({ story, plan, characters, lorebookEntries, 
     );
   }
   // The premise is the reader's own text (not hidden plan content); the beat alone is too thin to ground chapter 1.
-  const premise = str(story?.premise ?? story?.data?.premise, 2000);
-  if (premise) sys.push(`Story premise (from the reader):\n${premise}`);
+  // A long premise is condensed into plan.brief once, so every chapter does not carry the whole outline.
+  const brief = normalizePlan(plan).brief;
+  const premise = str(story?.premise ?? story?.data?.premise, 20000);
+  if (brief) sys.push(`Story brief (condensed from the reader's premise):\n${brief}`);
+  else if (premise) sys.push(`Story premise (from the reader):\n${premise}`);
   const charBlock = formatCharacters(characters);
   if (charBlock) sys.push(`Character cards (canon):\n${charBlock}`);
   const loreBlock = formatLorebook(lorebookEntries);

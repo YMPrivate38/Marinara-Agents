@@ -74,8 +74,9 @@ export const effectiveSettings = (settings, overrides, n, fallbackStyle) => {
 export function normalizePlan(raw) {
   const p = raw && typeof raw === "object" ? raw : {};
   return {
-    premise: str(p.premise, 2000),
-    outline: strings(p.outline, 20, 300),
+    premise: str(p.premise, 20000),
+    brief: str(p.brief, 10000),
+    outline: strings(p.outline, 20, 600),
     secrets: strings(p.secrets, 20, 300),
     twists: twists(p.twists),
     offscreen: strings(p.offscreen, 20, 300),

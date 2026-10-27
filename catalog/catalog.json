@@ -3713,7 +3713,7 @@
         },
         "id": "story-writer",
         "name": "Story Writer",
-        "version": "0.11.0",
+        "version": "0.11.1",
         "description": "Serial fiction written in chapters by an author who knows things you don't. Install it, restart Marinara Engine when prompted, then open Home → Story Writer.",
         "engine": {
           "min": "2.5.0",
@@ -3750,8 +3750,8 @@
           },
           {
             "path": "client.js",
-            "sha256": "a3ad7696b25254f5b4a9f5e27140605a384946587b93c428fa5d3f89e364b355",
-            "bytes": 62115
+            "sha256": "d43660ae23c789310cba39371e745006c2594d828656e315230d68d49b98e921",
+            "bytes": 62492
           },
           {
             "path": "epub.mjs",
@@ -3760,26 +3760,26 @@
           },
           {
             "path": "plan.mjs",
-            "sha256": "4df6ec7beb0ebfcd48c216b6fdb64a30ccb4edcbd90870574d5c652b7ada25f0",
-            "bytes": 5942
+            "sha256": "4be2fb96e205208fa97f1ee98e70a4197b7ffd09cf27ea9f20c52b5da739e597",
+            "bytes": 5975
           },
           {
             "path": "server.mjs",
-            "sha256": "5db36448c9a6b62bc4c619167a078ea9b610b06d3fbe938fe07a4ea3bf2fd255",
-            "bytes": 22165
+            "sha256": "327352a20c719e3863726046b39988ed5f78a26ac712cf781ddd43320bc69571",
+            "bytes": 23947
           },
           {
             "path": "pipeline.mjs",
-            "sha256": "28ac4ce26c54702a13ea3d3735f612622fbbea9caf5279d6813b53fb1088862c",
-            "bytes": 27727
+            "sha256": "512e1c9aed80d7306c3ce608a33b7bc810eb2e0d6142b69becc92120de63872d",
+            "bytes": 27969
           }
         ]
       },
       "category": "misc",
       "artifact": {
-        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/story-writer-0.11.0.zip",
-        "sha256": "4d3286393ce1f5ca931d85b811335b17dcf754679e254b49ed29088fcab94036",
-        "bytes": 125906
+        "url": "https://raw.githubusercontent.com/YMPrivate38/Marinara-Agents/main/artifacts/story-writer-0.11.1.zip",
+        "sha256": "f64e4c658f2f923064cd98bef1f21b5902c46ca66cf8322d36ea6214f7101efc",
+        "bytes": 128340
       },
       "documentationUrl": "https://github.com/YMPrivate38/Marinara-Agents/blob/main/packages/story-writer/README.md"
     },

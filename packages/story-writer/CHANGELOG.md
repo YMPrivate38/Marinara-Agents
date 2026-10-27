@@ -1,3 +1,7 @@
+## 0.11.1 — 2026-10-26
+- Fixed: the premise box stopped you at 2,000 characters. It now takes up to 20,000.
+- Changed: a premise over 1,500 characters, such as a whole outline, is condensed once into a brief that the author reads before each chapter. The planner still reads the full text and keeps your events in order. You can edit the brief in the Plan panel. Changing the premise in Story setup condenses it again.
+
 ## 0.11.0 — 2026-10-26
 - Added: Rewrite from here. Open a chapter to delete it and everything after it, restore the hidden plan to how it was before it, and write them again to the same length, with an optional note. Chapters from before this update can only be rewound from the last one.
 - Added: chapters that went wrong show "Needs a look" with the reasons: a low score, rewrites, agent edits or a failed plan step.

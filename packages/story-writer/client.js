@@ -696,7 +696,7 @@ class StoryWriterElement extends HTMLElement {
 
     const form = h("form", null, { className: "sw-form", style: "display:grid;gap:8px" });
     const title = h("input", null, { type: "text", required: "", maxlength: "200", value: "", placeholder: "Story title" });
-    const premise = h("textarea", "", { rows: "4", maxlength: "2000", placeholder: "Premise (optional)" });
+    const premise = h("textarea", "", { rows: "4", maxlength: "20000", placeholder: "Premise (optional)" });
     const conn = h("select");
     conn.append(h("option", "Engine default", { value: "" }));
     for (const c of StoryWriterElement.connections(connections)) {
@@ -813,7 +813,7 @@ class StoryWriterElement extends HTMLElement {
       const cleanTitle = (title.value ?? "").trim();
       if (!cleanTitle) return void (status.textContent = "Story title is required.");
       const cleanPremise = (premise.value ?? "").trim();
-      if (cleanPremise.length > 2000) return void (status.textContent = "Premise must be at most 2000 characters.");
+      if (cleanPremise.length > 20000) return void (status.textContent = "Premise must be at most 20000 characters.");
       const characterIds = charPicker.value();
       if (characterIds.length > 20) return void (status.textContent = "Select at most 20 characters.");
       const lorebookIds = lorePicker.value();
@@ -925,6 +925,10 @@ class StoryWriterElement extends HTMLElement {
       });
       kids.push(reveal);
 
+      // The brief is condensed from the reader's own premise, so it is not a spoiler and can be fixed without revealing the plan.
+      const brief = h("textarea", plan.brief ?? "", { rows: "8", maxlength: "10000" });
+      kids.push(h("label", "Brief (condensed from the premise; the author reads this before every chapter)"), brief);
+
       if (!shown) {
         kids.push(h("p", "Spoilers hidden", { className: "sw-muted" }));
       }
@@ -943,7 +947,7 @@ class StoryWriterElement extends HTMLElement {
 
       const save = h("button", "Save", { type: "button", className: "sw-btn-primary" });
       save.addEventListener("click", async () => {
-        const next = { ...plan };
+        const next = { ...plan, brief: (brief.value ?? "").trim() };
         if (shown) {
           for (const k of LISTS) {
             next[k] = k === "twists" ? StoryWriterElement.parseTwists(fields[k].value) : StoryWriterElement.listLines(fields[k].value);
@@ -1104,7 +1108,7 @@ class StoryWriterElement extends HTMLElement {
   setupPanel(story, connections = []) {
     const details = h("details", null, { className: "sw-settings" });
     const title = h("input", null, { type: "text", maxlength: "200", value: story.title ?? "" });
-    const premise = h("textarea", story.premise ?? "", { rows: "4", maxlength: "2000" });
+    const premise = h("textarea", story.premise ?? "", { rows: "4", maxlength: "20000" });
     const conn = h("select");
     conn.append(h("option", "Engine default", { value: "" }));
     for (const c of StoryWriterElement.connections(connections)) conn.append(h("option", c.name || c.id, { value: c.id }));

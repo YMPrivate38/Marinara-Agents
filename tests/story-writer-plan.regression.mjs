@@ -37,7 +37,7 @@ for (const tense of TENSES) assert.equal(normalizeStyle({ tense }).tense, tense)
 
 // (2) normalizePlan: caps and sanitizing
 const big = normalizePlan({
-  premise: "x".repeat(9999),
+  premise: "x".repeat(29999),
   outline: Array(99).fill("y".repeat(999)),
   secrets: [1, null, "ok", " "],
   twists: ["a", { text: 5 }, { text: "b", reveal: "c" }],
@@ -45,9 +45,9 @@ const big = normalizePlan({
   chapter: "3",
   style: { chapterWords: 99999, pointOfView: "x", tense: "future" },
 });
-assert.equal(big.premise.length, 2000);
+assert.equal(big.premise.length, 20000);
 assert.equal(big.outline.length, 20);
-assert.equal(big.outline[0].length, 300);
+assert.equal(big.outline[0].length, 600);
 assert.deepEqual(big.secrets, ["ok"]);
 assert.deepEqual(big.twists, [
   { text: "a", reveal: null },

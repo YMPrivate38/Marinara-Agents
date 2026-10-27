@@ -684,6 +684,13 @@ assert.equal(stepMessages({ plan: { beat: "B" }, chapterText: "Hi", n: 1 }).leng
   await assert.rejects(rewindStory(documents, "story:old", 1), /last one/);
 }
 
+// the writer reads the condensed brief instead of the raw premise when there is one
+{
+  const sysOf = (plan) => buildWriterMessages({ story: { title: "T", premise: "RAW_PREMISE" }, plan, characters: [] })[0].content;
+  assert.ok(sysOf({ brief: "SHORT_BRIEF" }).includes("SHORT_BRIEF") && !sysOf({ brief: "SHORT_BRIEF" }).includes("RAW_PREMISE"));
+  assert.ok(sysOf({}).includes("RAW_PREMISE"));
+}
+
 // a nudge override reaches the writer prompt; story-level settings never carry one
 {
   const documents = makeDocuments();

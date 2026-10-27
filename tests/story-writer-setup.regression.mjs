@@ -15,11 +15,24 @@ const documents = {
   },
   async remove() { return true; },
 };
+let briefCalls = 0;
+let briefFails = false;
+const languageModels = {
+  async resolveForRequest() {
+    return {
+      async chatComplete(messages) {
+        briefCalls++;
+        if (briefFails) throw new Error("model down");
+        return { content: `BRIEF OF ${messages[1].content.length}` };
+      },
+    };
+  },
+};
 const routes = {};
 const app = Object.fromEntries(["get", "put", "post", "delete"].map((m) => [m, (path, fn) => (routes[`${m} ${path}`] = fn)]));
 await activate({
   api: {
-    runtime: { persistence: { documents }, languageModels: {}, resources: {}, json: { parseJsonish: JSON.parse } },
+    runtime: { persistence: { documents }, languageModels, resources: {}, json: { parseJsonish: JSON.parse } },
     registerPrivilegedRoutes: async (register) => { await register(app); return () => {}; },
   },
 });
@@ -54,5 +67,19 @@ assert.equal(store.get("plan:story:1").data.beat, "keep me");
 
 await call("put /stories/:id/setup", { id: "story:1" }, { title: "New", presetName: "", presetText: "" });
 assert.equal(store.get("story:1").data.settings.presetName, "");
+
+// a long premise is condensed once when it changes; a short one clears the brief; a failed call leaves the brief empty
+const longPremise = "x".repeat(3000);
+await call("put /stories/:id/setup", { id: "story:1" }, { title: "New", premise: longPremise });
+assert.equal(briefCalls, 1);
+assert.equal(store.get("plan:story:1").data.brief, "BRIEF OF 3000");
+await call("put /stories/:id/setup", { id: "story:1" }, { title: "New", premise: longPremise });
+assert.equal(briefCalls, 1);
+briefFails = true;
+await call("put /stories/:id/setup", { id: "story:1" }, { title: "New", premise: longPremise + "y" });
+assert.equal(store.get("plan:story:1").data.brief, "");
+briefFails = false;
+await call("put /stories/:id/setup", { id: "story:1" }, { title: "New", premise: "short" });
+assert.equal(store.get("plan:story:1").data.brief, "");
 
 console.log("story-writer setup ok");

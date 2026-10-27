@@ -3,9 +3,9 @@ import { buildEpub, chaptersFromDocs } from "./epub.mjs";
 import { chapterId, formatCharacters, formatLorebook, JobRunner, rewindStory, storyView, writeChapter } from "./pipeline.mjs";
 import { normalizeOverride, normalizeOverrides, normalizePlan, normalizeSettings, normalizeStyle, PACKAGE_ID, readPlan, writePlan } from "./plan.mjs";
 
-const PLAN_PROMPT = `You are the hidden author of a serial story. From the premise (and any character cards and lore), plan it. Stay faithful to the cards and the premise; plan ordinary, character-driven progress, not shocks. Return ONLY JSON, no prose:
+const PLAN_PROMPT = `You are the hidden author of a serial story. From the premise (and any character cards and lore), plan it. Stay faithful to the cards and the premise; if the premise is already an outline, keep its events and their order rather than inventing a new one; plan ordinary, character-driven progress, not shocks. Return ONLY JSON, no prose:
 {"outline":["chapter-level beats"],"secrets":["facts the reader does not know yet"],"twists":[{"text":"...","reveal":"chapter hint or null"}],"offscreen":["what characters do out of sight"],"threads":["open plot threads"],"beat":"what happens in chapter 1"}
-Keep every item to one sentence.`;
+Keep every item to one sentence, except outline items, which may take two when the premise gives each chapter several beats.`;
 
 const TWIST_PLAN = {
   none: "Leave twists empty and plan no reveals.",
@@ -21,7 +21,11 @@ const ARC_PROMPT = {
 };
 const ARC_SHAPE = `Return ONLY JSON, no prose:
 {"outline":["chapter-level beats of this arc, about 8-12"],"secrets":["facts the reader does not know yet"],"twists":[{"text":"...","reveal":"chapter hint or null"}],"offscreen":["what characters do out of sight"],"threads":["open plot threads"],"beat":"what happens in the next chapter"}
-Keep every item to one sentence.`;
+Keep every item to one sentence, except outline items, which may take two.`;
+
+// Premises up to this length go to the writer as they are; longer ones (often a whole outline) are condensed once.
+const BRIEF_THRESHOLD = 1500;
+const BRIEF_PROMPT = `You condense a story premise or outline into a brief that the author reads before writing every chapter. Keep: the setting and tone, who the main characters are and how they relate, and every rule, constraint, style note and anything marked as must or never, close to the reader's own wording. If the premise plans the story chapter by chapter, keep that plan as a numbered list with each chapter's key beats. Drop only repetition and flourish. Up to about 1000 words, plain text, no preamble.`;
 
 const TIMEOUT_MESSAGE =
   "The model call timed out. Raise AGENT_CALL_TIMEOUT_MS in the Engine .env or lower the chapter length.";
@@ -33,7 +37,7 @@ const validIdArray = (v) =>
 const setupError = (body) => {
   const title = typeof body.title === "string" ? body.title.trim() : "";
   if (!title || title.length > 200) return "Title must be 1-200 characters";
-  if (body.premise !== undefined && body.premise !== null && (typeof body.premise !== "string" || body.premise.trim().length > 2000)) return "Premise must be at most 2000 characters";
+  if (body.premise !== undefined && body.premise !== null && (typeof body.premise !== "string" || body.premise.trim().length > 20000)) return "Premise must be at most 20000 characters";
   if (body.characterIds !== undefined && !validIdArray(body.characterIds)) return "characterIds must be at most 20 strings of 1-100 characters";
   if (body.lorebookIds !== undefined && !validIdArray(body.lorebookIds)) return "lorebookIds must be at most 20 strings of 1-100 characters";
   if (body.connectionId !== undefined && body.connectionId !== null && (typeof body.connectionId !== "string" || body.connectionId.length > 200)) return "connectionId must be a string or null";
@@ -132,8 +136,20 @@ export async function activate({ api }) {
       .join("\n\n");
   };
 
+  // A failed condensing call is not worth failing the plan over: the writer falls back to the raw premise.
+  const makeBrief = async (premise, connectionId) => {
+    if (premise.length <= BRIEF_THRESHOLD) return "";
+    try {
+      const model = await languageModels.resolveForRequest({ connectionId: connectionId ?? undefined });
+      const out = await model.chatComplete([{ role: "system", content: BRIEF_PROMPT }, { role: "user", content: premise }], { temperature: 0.2, maxTokens: 1500 });
+      return String(out.content ?? "").trim().slice(0, 10000);
+    } catch {
+      return "";
+    }
+  };
+
   const createPlan = async ({ storyId, premise, style, connectionId, story = {} }) => {
-    const cleanPremise = typeof premise === "string" ? premise.trim().slice(0, 2000) : "";
+    const cleanPremise = typeof premise === "string" ? premise.trim().slice(0, 20000) : "";
     const existing = await readPlan(documents, storyId);
     const nextStyle = normalizeStyle(style ?? existing?.data?.style);
     // No premise: store just the chapter style, no model call.
@@ -147,7 +163,8 @@ export async function activate({ api }) {
       [{ role: "system", content: `${PLAN_PROMPT}\n${TWIST_PLAN[normalizeSettings(story.settings).twists]}` }, { role: "user", content: await planContext(story, cleanPremise) }],
       { temperature: 0.8, maxTokens: 2000 },
     );
-    const plan = normalizePlan({ ...json.parseJsonish(out.content ?? ""), premise: cleanPremise, style: nextStyle });
+    const brief = await makeBrief(cleanPremise, connectionId);
+    const plan = normalizePlan({ ...json.parseJsonish(out.content ?? ""), premise: cleanPremise, brief, style: nextStyle });
     return writePlan(documents, storyId, plan, existing?.revision ?? null);
   };
 
@@ -161,7 +178,7 @@ export async function activate({ api }) {
     return saved ? view(saved) : reply.code(409).send({ error: "The plan changed; reload it and try again" });
   };
   const postPlan = async (doc, request, reply) => {
-    const premise = typeof request.body?.premise === "string" ? request.body.premise.trim().slice(0, 2000) : "";
+    const premise = typeof request.body?.premise === "string" ? request.body.premise.trim().slice(0, 20000) : "";
     if (!premise && !request.body?.style) return reply.code(400).send({ error: "A premise is required" });
     try {
       return view(await createPlan({ storyId: doc.id, premise, style: request.body?.style, connectionId: doc.data?.connectionId ?? null, story: doc.data }));
@@ -279,7 +296,11 @@ export async function activate({ api }) {
         const cur = normalizeSettings(doc.data?.settings, planDoc?.data?.style);
         const settings = normalizeSettings({ ...cur, presetName: body.presetName ?? cur.presetName, presetText: body.presetText ?? cur.presetText }, planDoc?.data?.style);
         await documents.update({ id: doc.id, packageId: PACKAGE_ID, name: setup.title, description: doc.description, data: { ...doc.data, ...setup, settings }, updatedAt: new Date().toISOString(), expectedRevision: doc.revision });
-        if (planDoc) await writePlan(documents, doc.id, { ...planDoc.data, premise: setup.premise }, planDoc.revision);
+        if (planDoc) {
+          const changed = setup.premise !== planDoc.data?.premise;
+          const brief = changed ? await makeBrief(setup.premise, setup.connectionId) : planDoc.data?.brief;
+          await writePlan(documents, doc.id, { ...planDoc.data, premise: setup.premise, brief }, planDoc.revision);
+        }
         return { ok: true };
       });
 
