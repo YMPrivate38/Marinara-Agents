@@ -152,6 +152,7 @@ const storyPayload = {
       title: "The Fog",
       blurb: "Fog rolls in over the pier.",
       wordCount: 1234,
+      flags: ["Needed 1 rewrite"],
       summary: "INTERNAL_SUMMARY_MARK",
       text: "BODY_MARK",
     },
@@ -196,6 +197,8 @@ const readerDump = treeText(el);
 assert.ok(readerDump.includes("Chapter 1: The Fog"));
 assert.ok(readerDump.includes("Fog rolls in over the pier."));
 assert.ok(readerDump.includes("1234 words"));
+assert.ok(readerDump.includes("Needs a look") && readerDump.includes("Needed 1 rewrite"));
+assert.ok(readerDump.includes("Start reading") && readerDump.includes("Story so far"));
 assert.ok(!readerDump.includes("INTERNAL_SUMMARY_MARK"));
 assert.ok(!readerDump.includes("BODY_MARK"));
 
@@ -207,9 +210,9 @@ await new Promise((r) => setTimeout(r, 0));
 
 const beforeReveal = treeText(el);
 assert.ok(beforeReveal.includes("Spoilers hidden"));
-assert.ok(beforeReveal.includes("1900"));
-assert.ok(beforeReveal.includes("first person"));
-assert.ok(beforeReveal.includes("present"));
+assert.ok(beforeReveal.includes("Revise arc"));
+assert.ok(beforeReveal.includes("Next arc"));
+assert.ok(beforeReveal.includes("Chapter 2 overrides"));
 assert.ok(!beforeReveal.includes("SECRET_MARK"));
 assert.ok(!beforeReveal.includes("OUTLINE_MARK"));
 assert.ok(!beforeReveal.includes("TWIST_MARK"));
@@ -366,6 +369,9 @@ await all(el)
   .find((n) => n.tag === "form")
   .listeners.submit({ preventDefault() {} });
 assert.deepEqual(postedStory?.settings, {
+  chapterWords: 2500,
+  pointOfView: "third person limited",
+  tense: "past",
   twists: "rare",
   presetName: "",
   presetText: "",

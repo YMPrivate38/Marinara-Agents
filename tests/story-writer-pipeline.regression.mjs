@@ -15,6 +15,8 @@ import {
   parseStep,
   stepMessages,
   storyView,
+  chapterFlags,
+  rewindStory,
   writeChapter,
 } from "../packages/story-writer/pipeline.mjs";
 import { PACKAGE_ID, planId, writePlan } from "../packages/story-writer/plan.mjs";
@@ -626,13 +628,76 @@ assert.equal(stepMessages({ plan: { beat: "B" }, chapterText: "Hi", n: 1 }).leng
   assert.ok(!dump.includes("SECRET_INTERNAL_SUMMARY_SPOILER"));
   assert.ok(!dump.includes("SECRET_CHAPTER_BODY_TEXT"));
   assert.equal(view.chapters[0].wordCount, 4);
-  assert.deepEqual(Object.keys(view.chapters[0]).sort(), ["blurb", "n", "title", "wordCount"]);
+  assert.deepEqual(Object.keys(view.chapters[0]).sort(), ["blurb", "flags", "n", "title", "wordCount"]);
 }
 
 // checker off: one model call for the chapter, one for the plan step, no check call
 {
   const documents = makeDocuments();
   const story = await seedStory(documents, "story:nochk", {}, { settings: { checker: false } });
+  let calls = 0;
+  const llm = { async complete() { calls++; return calls === 1 ? "Chapter text." : '{"title":"T","summary":"s","blurb":"b","beat":"next"}'; } };
+  await writeChapter({ story, deps: { documents, resources: {}, llm, parseJsonish: JSON.parse } });
+  assert.equal(calls, 2);
+}
+
+// flags: clean chapters have none; low scores, rewrites, agent edits and a failed plan step each say why
+{
+  assert.deepEqual(chapterFlags({ scores: { inCharacter: 9, plausibility: 8 }, attempts: 1, agentNotes: [], planned: true }), []);
+  assert.deepEqual(chapterFlags({ attempts: 1 }), []);
+  const f = chapterFlags({ scores: { inCharacter: 4, plausibility: 9 }, attempts: 3, agentNotes: ["Prose: tightened"], planned: false, issues: [{ character: "Bo", problem: "too cheerful" }] });
+  assert.equal(f.length, 5);
+  assert.ok(f[0].includes("Scored low") && f[1].includes("2 rewrites") && f.at(-1) === "Checker: Bo: too cheerful");
+}
+
+// written chapters keep the plan they were written from, the checker's issues, and whether the plan step worked
+{
+  const documents = makeDocuments();
+  const story = await seedStory(documents, "story:snap", {}, {});
+  let calls = 0;
+  const llm = { async complete() { calls++; return calls === 1 ? "Chapter text." : calls === 2 ? '{"scores":{"inCharacter":9,"plausibility":9},"issues":[]}' : '{"title":"T","summary":"s","blurb":"b","beat":"next beat"}'; } };
+  const rec = await writeChapter({ story, deps: { documents, resources: {}, llm, parseJsonish: JSON.parse } });
+  assert.equal(rec.planned, true);
+  assert.equal(rec.planBefore.chapter, 0);
+  assert.notEqual((await documents.getById("story-writer", "plan:story:snap")).data.beat, rec.planBefore.beat);
+}
+
+// rewind: later chapters go, the plan returns to its state before chapter n, old chapters without a snapshot only rewind from the last
+{
+  const documents = makeDocuments();
+  const story = await seedStory(documents, "story:rw", {}, {});
+  let calls = 0;
+  const llm = { async complete() { calls++; return calls % 3 === 1 ? "Text." : calls % 3 === 2 ? '{"scores":{"inCharacter":9,"plausibility":9},"issues":[]}' : `{"title":"T","summary":"s","blurb":"b","beat":"beat ${calls}"}`; } };
+  for (let i = 0; i < 3; i++) await writeChapter({ story, deps: { documents, resources: {}, llm, parseJsonish: JSON.parse } });
+  const beatBefore2 = (await documents.getById("story-writer", "chapter:story:rw:2")).data.planBefore.beat;
+  assert.equal(await rewindStory(documents, "story:rw", 2), 2);
+  assert.equal(await documents.getById("story-writer", "chapter:story:rw:2"), null);
+  assert.equal(await documents.getById("story-writer", "chapter:story:rw:3"), null);
+  assert.ok(await documents.getById("story-writer", "chapter:story:rw:1"));
+  assert.equal((await documents.getById("story-writer", "story:rw")).data.chapterCount, 1);
+  assert.equal((await documents.getById("story-writer", "plan:story:rw")).data.beat, beatBefore2);
+  await assert.rejects(rewindStory(documents, "story:rw", 2), /not found/);
+  const old = await seedStory(documents, "story:old", {}, {});
+  for (let i = 0; i < 2; i++) await writeChapter({ story: old, deps: { documents, resources: {}, llm, parseJsonish: JSON.parse } });
+  const ch1 = await documents.getById("story-writer", "chapter:story:old:1");
+  await documents.update({ ...ch1, expectedRevision: ch1.revision, data: { ...ch1.data, planBefore: undefined } });
+  await assert.rejects(rewindStory(documents, "story:old", 1), /last one/);
+}
+
+// a nudge override reaches the writer prompt; story-level settings never carry one
+{
+  const documents = makeDocuments();
+  const story = await seedStory(documents, "story:nudge", {}, { settings: { nudge: "IGNORED" }, chapterOverrides: { 1: { nudge: "GO_TO_THE_PIER", checker: false } } });
+  const seen = [];
+  const llm = { async complete(m) { seen.push(m.map((x) => x.content).join("\n")); return seen.length === 1 ? "Text." : '{"title":"T","summary":"s","blurb":"b","beat":"x"}'; } };
+  await writeChapter({ story, deps: { documents, resources: {}, llm, parseJsonish: JSON.parse } });
+  assert.ok(seen[0].includes("GO_TO_THE_PIER") && !seen[0].includes("IGNORED"));
+}
+
+// chapter override: applies to chapter 1 only (checker off -> no check call), chapter 2 inherits (checker on)
+{
+  const documents = makeDocuments();
+  const story = await seedStory(documents, "story:ov", {}, { chapterOverrides: { 1: { checker: false } } });
   let calls = 0;
   const llm = { async complete() { calls++; return calls === 1 ? "Chapter text." : '{"title":"T","summary":"s","blurb":"b","beat":"next"}'; } };
   await writeChapter({ story, deps: { documents, resources: {}, llm, parseJsonish: JSON.parse } });

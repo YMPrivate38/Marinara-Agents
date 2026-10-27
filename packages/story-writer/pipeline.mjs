@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mergePlanUpdate, normalizePlan, normalizeSettings, PACKAGE_ID, readPlan, writePlan } from "./plan.mjs";
+import { effectiveSettings, mergePlanUpdate, normalizeOverrides, normalizePlan, normalizeSettings, PACKAGE_ID, readPlan, writePlan } from "./plan.mjs";
 
 export const chapterId = (storyId, n) => `chapter:${storyId}:${n}`;
 
@@ -117,8 +117,9 @@ export function trackerNotes(previousChapters) {
 }
 
 export function buildWriterMessages({ story, plan, characters, lorebookEntries, previousChapters, nudge, n, critique }) {
-  const { beat, style } = normalizePlan(plan);
-  const settings = normalizeSettings(story?.settings ?? story?.data?.settings);
+  const { beat, style: planStyle } = normalizePlan(plan);
+  const settings = normalizeSettings(story?.settings ?? story?.data?.settings, planStyle);
+  const style = settings;
   const title = str(story?.title ?? story?.data?.title, 200);
   const sys = [
     `You are a serial-fiction author${title ? ` writing "${title}"` : ""}. Write ONE complete chapter of about ${style.chapterWords} words, in ${style.pointOfView}, ${style.tense} tense. Continue directly from where the previous chapter ended and stop at a natural chapter break; do not force a cliffhanger, recap or moral. Show, don't summarize; keep characters true to their cards; never mention being an AI, a plan or a beat. ${TWIST_RULES[settings.twists]}`,
@@ -293,15 +294,15 @@ export async function writeChapter({
   if (Number.isInteger(storyDoc?.data?.chapterCount)) {
     storyData.chapterCount = storyDoc.data.chapterCount;
   }
-  const settings = normalizeSettings(storyData.settings);
+  const n = (Number.isInteger(storyData.chapterCount) ? storyData.chapterCount : 0) + 1;
+  const planDoc = await readPlan(documents, storyId);
+  const plan = normalizePlan(planDoc?.data);
+  const settings = effectiveSettings(storyData.settings, storyData.chapterOverrides, n, plan.style);
+  storyData.settings = settings;
   // The Fanfic Writer agent is the same check, so the built-in one steps aside for it.
   if (settings.agents.some((a) => a.type === "fanfic-writer")) settings.checker = false;
   const minScore = minScoreArg ?? settings.minScore;
   const maxRetries = maxRetriesArg ?? settings.maxRetries;
-  const n = (Number.isInteger(storyData.chapterCount) ? storyData.chapterCount : 0) + 1;
-
-  const planDoc = await readPlan(documents, storyId);
-  const plan = normalizePlan(planDoc?.data);
 
   let characters = [];
   if (Array.isArray(storyData.characterIds) && storyData.characterIds.length && resources?.listCharacters) {
@@ -330,7 +331,7 @@ export async function writeChapter({
 
   checkAbort(signal);
 
-  const maxTokens = Math.round(plan.style.chapterWords * 2);
+  const maxTokens = Math.round(settings.chapterWords * 2);
   let best = null;
   let critique = "";
   let attempts = 0;
@@ -346,7 +347,7 @@ export async function writeChapter({
         characters,
         lorebookEntries,
         previousChapters,
-        nudge,
+        nudge: nudge || settings.nudge,
         n,
         critique: attempt > 1 ? critique : undefined,
       }),
@@ -373,7 +374,7 @@ export async function writeChapter({
     const scores = check ? { inCharacter: check.inCharacter, plausibility: check.plausibility } : null;
     const sum = check ? check.inCharacter + check.plausibility : Infinity;
     if (!best || sum > best.sum) {
-      best = { text, scores, sum };
+      best = { text, scores, sum, issues: check?.issues ?? [] };
     }
 
     if (!needsRetry(check, minScore) || attempt > maxRetries) break;
@@ -408,6 +409,7 @@ export async function writeChapter({
   checkAbort(signal);
   onStatus("planning");
   let step = null;
+  const planBefore = plan;
   try {
     const rawStep = await llm.complete(stepMessages({ plan, chapterText: best.text, n, twists: settings.twists }), {
       temperature: 0.2,
@@ -435,6 +437,9 @@ export async function writeChapter({
     summary,
     blurb,
     scores: best.scores,
+    issues: best.issues.slice(0, 10),
+    planned: Boolean(step),
+    planBefore,
     attempts,
     trackers,
     agentNotes,
@@ -482,12 +487,49 @@ export async function writeChapter({
   return record;
 }
 
+// Deletes chapters n..last and puts the plan back as it was before chapter n. Returns how many chapters were removed.
+export async function rewindStory(documents, storyId, n, now = new Date().toISOString()) {
+  const story = await documents.getById(PACKAGE_ID, storyId);
+  const count = Number.isInteger(story?.data?.chapterCount) ? story.data.chapterCount : 0;
+  if (!Number.isInteger(n) || n < 1 || n > count) throw new Error("Chapter not found");
+  const first = await documents.getById(PACKAGE_ID, chapterId(storyId, n));
+  const snapshot = first?.data?.planBefore;
+  if (!snapshot && n !== count) throw new Error("Chapters written before 0.11.0 can only be rewound from the last one");
+  for (let k = n; k <= count; k++) {
+    const ch = await documents.getById(PACKAGE_ID, chapterId(storyId, k));
+    if (ch) await documents.remove(PACKAGE_ID, ch.id, ch.revision);
+  }
+  if (snapshot) await writePlan(documents, storyId, normalizePlan(snapshot), null, now);
+  await documents.update({
+    id: story.id,
+    packageId: PACKAGE_ID,
+    name: story.name,
+    description: story.description,
+    data: { ...story.data, chapterCount: n - 1 },
+    updatedAt: now,
+    expectedRevision: story.revision,
+  });
+  return count - n + 1;
+}
+
 const countWords = (text) => {
   const t = String(text ?? "").trim();
   return t ? t.split(/\s+/).length : 0;
 };
 
-export function storyView(story, chapters = []) {
+// Plain-language reasons a chapter deserves a look; empty for a clean chapter.
+export function chapterFlags(c, minScore = 7) {
+  const out = [];
+  const sc = c?.scores;
+  if (sc && Math.min(sc.inCharacter, sc.plausibility) < minScore) out.push(`Scored low (in character ${sc.inCharacter}, plausibility ${sc.plausibility})`);
+  if (c?.attempts > 1) out.push(`Needed ${c.attempts - 1} rewrite${c.attempts > 2 ? "s" : ""}`);
+  for (const note of Array.isArray(c?.agentNotes) ? c.agentNotes : []) out.push(`Agent edit: ${note}`);
+  if (c?.planned === false) out.push("The plan step failed, so the next beat was not updated");
+  if (out.length) for (const i of Array.isArray(c?.issues) ? c.issues : []) out.push(`Checker: ${i.character ? `${i.character}: ` : ""}${i.problem}`);
+  return out;
+}
+
+export function storyView(story, chapters = [], planStyle) {
   const s =
     story?.data && typeof story.data === "object" ? { ...story.data, id: story.id ?? story.data.id } : (story ?? {});
   return {
@@ -497,7 +539,8 @@ export function storyView(story, chapters = []) {
     characterIds: Array.isArray(s.characterIds) ? [...s.characterIds] : [],
     lorebookIds: Array.isArray(s.lorebookIds) ? [...s.lorebookIds] : [],
     connectionId: s.connectionId ?? null,
-    settings: normalizeSettings(s.settings),
+    settings: normalizeSettings(s.settings, planStyle),
+    chapterOverrides: normalizeOverrides(s.chapterOverrides),
     chapterCount: Number.isInteger(s.chapterCount) ? s.chapterCount : 0,
     chapters: (Array.isArray(chapters) ? chapters : []).map((raw, i) => {
       const c = raw?.data && typeof raw.data === "object" ? raw.data : (raw ?? {});
@@ -506,6 +549,7 @@ export function storyView(story, chapters = []) {
         title: c.title ?? `Chapter ${i + 1}`,
         blurb: c.blurb ?? "",
         wordCount: Number.isInteger(c.wordCount) ? c.wordCount : countWords(c.text),
+        flags: chapterFlags(c, normalizeSettings(s.settings, planStyle).minScore),
       };
     }),
   };
@@ -567,7 +611,7 @@ export class JobRunner {
           }
           await this.#run({
             storyId,
-            nudge,
+            nudge: i === 0 ? nudge : undefined,
             onStatus: (phase) => {
               if (record.status === "running") record.phase = String(phase);
             },
@@ -597,6 +641,10 @@ export class JobRunner {
     })();
 
     return id;
+  }
+
+  isRunning(storyId) {
+    return [...this.#jobs.values()].some(({ record }) => record.storyId === storyId && record.status === "running");
   }
 
   get(id) {

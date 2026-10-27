@@ -32,10 +32,13 @@ const agents = (v) =>
 export const TWIST_LEVELS = ["none", "rare", "free"];
 
 // Per-story author controls, editable between chapters. Lenient on purpose: bad values fall back to defaults.
-export function normalizeSettings(raw) {
+// fallbackStyle is the legacy plan.style, used by stories made before style moved into settings.
+export function normalizeSettings(raw, fallbackStyle) {
   const s = raw && typeof raw === "object" ? raw : {};
+  const style = normalizeStyle({ ...fallbackStyle, ...Object.fromEntries(["chapterWords", "pointOfView", "tense"].filter((k) => s[k] !== undefined).map((k) => [k, s[k]])) });
   const clamp = (v, lo, hi, d) => (Number.isFinite(Math.round(Number(v))) && v !== null && v !== "" ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : d);
   return {
+    ...style,
     twists: TWIST_LEVELS.includes(s.twists) ? s.twists : "rare",
     presetName: str(s.presetName, 200),
     presetText: str(s.presetText, 6000),
@@ -47,6 +50,27 @@ export function normalizeSettings(raw) {
   };
 }
 
+// Per-chapter overrides: { "13": { twists: "free", chapterWords: 4000 } }. Only keys present are kept, so everything else inherits.
+export const OVERRIDE_KEYS = ["twists", "presetText", "checker", "minScore", "maxRetries", "agents", "chapterWords", "pointOfView", "tense", "nudge"];
+export function normalizeOverrides(raw) {
+  const out = {};
+  for (const [n, o] of Object.entries(raw && typeof raw === "object" ? raw : {})) {
+    if (!/^[1-9]\d{0,3}$/.test(n) || !o || typeof o !== "object") continue;
+    const full = { ...normalizeSettings(o), nudge: str(o.nudge, 500) };
+    const picked = Object.fromEntries(OVERRIDE_KEYS.filter((k) => o[k] !== undefined).map((k) => [k, full[k]]));
+    if (Object.keys(picked).length && Object.keys(out).length < 50) out[n] = picked;
+  }
+  return out;
+}
+export function normalizeOverride(raw) {
+  return normalizeOverrides({ 1: raw })[1] ?? {};
+}
+// nudge is chapter-only: it comes from the override, never from the story's settings.
+export const effectiveSettings = (settings, overrides, n, fallbackStyle) => {
+  const ov = normalizeOverrides(overrides)[n];
+  return { ...normalizeSettings({ ...normalizeSettings(settings, fallbackStyle), ...ov }), nudge: ov?.nudge ?? "" };
+};
+
 export function normalizePlan(raw) {
   const p = raw && typeof raw === "object" ? raw : {};
   return {
@@ -57,6 +81,7 @@ export function normalizePlan(raw) {
     offscreen: strings(p.offscreen, 20, 300),
     threads: strings(p.threads, 20, 300),
     beat: str(p.beat, 800),
+    arc: Number.isInteger(p.arc) && p.arc >= 1 ? Math.min(p.arc, 99) : 1,
     chapter: Number.isInteger(p.chapter) && p.chapter >= 0 ? Math.min(p.chapter, 9999) : 0,
     updatedAt: str(p.updatedAt, 40),
     style: normalizeStyle(p.style),

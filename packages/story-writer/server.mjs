@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { buildEpub, chaptersFromDocs } from "./epub.mjs";
-import { chapterId, formatCharacters, formatLorebook, JobRunner, storyView, writeChapter } from "./pipeline.mjs";
-import { normalizePlan, normalizeSettings, normalizeStyle, PACKAGE_ID, readPlan, writePlan } from "./plan.mjs";
+import { chapterId, formatCharacters, formatLorebook, JobRunner, rewindStory, storyView, writeChapter } from "./pipeline.mjs";
+import { normalizeOverride, normalizeOverrides, normalizePlan, normalizeSettings, normalizeStyle, PACKAGE_ID, readPlan, writePlan } from "./plan.mjs";
 
 const PLAN_PROMPT = `You are the hidden author of a serial story. From the premise (and any character cards and lore), plan it. Stay faithful to the cards and the premise; plan ordinary, character-driven progress, not shocks. Return ONLY JSON, no prose:
 {"outline":["chapter-level beats"],"secrets":["facts the reader does not know yet"],"twists":[{"text":"...","reveal":"chapter hint or null"}],"offscreen":["what characters do out of sight"],"threads":["open plot threads"],"beat":"what happens in chapter 1"}
@@ -13,11 +13,39 @@ const TWIST_PLAN = {
   free: "Plan up to three twists, each seeded early and revealed late.",
 };
 
+// Arcs: the outline is a finite stretch of story. "revise" re-plans the rest of the current arc, "next" starts a fresh one once it is done.
+const ARC_PROMPT = {
+  revise:
+    "You are the hidden author of a serial story. Re-plan the REST of the current arc from where the story stands now: keep everything that already happened, keep the cast and tone, and follow the reader's direction if given. Do not repeat events from the chapter summaries.",
+  next: "You are the hidden author of a serial story. The current arc has ended. Plan the NEXT arc as a natural continuation of the chapter summaries: the consequences of what happened, the open threads, and the characters' new goals. Do not repeat or undo earlier events, and do not wrap the story up.",
+};
+const ARC_SHAPE = `Return ONLY JSON, no prose:
+{"outline":["chapter-level beats of this arc, about 8-12"],"secrets":["facts the reader does not know yet"],"twists":[{"text":"...","reveal":"chapter hint or null"}],"offscreen":["what characters do out of sight"],"threads":["open plot threads"],"beat":"what happens in the next chapter"}
+Keep every item to one sentence.`;
+
 const TIMEOUT_MESSAGE =
   "The model call timed out. Raise AGENT_CALL_TIMEOUT_MS in the Engine .env or lower the chapter length.";
 
 const validIdArray = (v) =>
   Array.isArray(v) && v.length <= 20 && v.every((x) => typeof x === "string" && x.trim().length >= 1 && x.trim().length <= 100);
+
+// Shared by create and the setup editor: the fields fixed at creation.
+const setupError = (body) => {
+  const title = typeof body.title === "string" ? body.title.trim() : "";
+  if (!title || title.length > 200) return "Title must be 1-200 characters";
+  if (body.premise !== undefined && body.premise !== null && (typeof body.premise !== "string" || body.premise.trim().length > 2000)) return "Premise must be at most 2000 characters";
+  if (body.characterIds !== undefined && !validIdArray(body.characterIds)) return "characterIds must be at most 20 strings of 1-100 characters";
+  if (body.lorebookIds !== undefined && !validIdArray(body.lorebookIds)) return "lorebookIds must be at most 20 strings of 1-100 characters";
+  if (body.connectionId !== undefined && body.connectionId !== null && (typeof body.connectionId !== "string" || body.connectionId.length > 200)) return "connectionId must be a string or null";
+  return null;
+};
+const cleanSetup = (body) => ({
+  title: body.title.trim(),
+  premise: typeof body.premise === "string" ? body.premise.trim() : "",
+  characterIds: Array.isArray(body.characterIds) ? body.characterIds.map((x) => x.trim()) : [],
+  lorebookIds: Array.isArray(body.lorebookIds) ? body.lorebookIds.map((x) => x.trim()) : [],
+  connectionId: typeof body.connectionId === "string" ? body.connectionId.trim() || null : null,
+});
 
 export async function activate({ api }) {
   const { persistence, languageModels, resources, json } = api.runtime;
@@ -127,7 +155,8 @@ export async function activate({ api }) {
   const getPlan = async (storyId) => view(await readPlan(documents, storyId));
   const putPlan = async (storyId, request, reply) => {
     const existing = await readPlan(documents, storyId);
-    const plan = { ...normalizePlan(request.body?.plan), chapter: normalizePlan(existing?.data).chapter };
+    const { chapter, arc } = normalizePlan(existing?.data);
+    const plan = { ...normalizePlan(request.body?.plan), chapter, arc };
     const saved = await writePlan(documents, storyId, plan, Number.isInteger(request.body?.revision) ? request.body.revision : -1);
     return saved ? view(saved) : reply.code(409).send({ error: "The plan changed; reload it and try again" });
   };
@@ -139,6 +168,40 @@ export async function activate({ api }) {
     } catch (error) {
       return reply.code(502).send({ error: `Could not generate the plan: ${error?.message ?? error}` });
     }
+  };
+
+  const reviseArc = async (doc, mode, direction) => {
+    const existing = await readPlan(documents, doc.id);
+    const cur = normalizePlan(existing?.data);
+    const chapters = await loadChapters(doc);
+    // Newest summaries win when the story is long.
+    let summaries = "";
+    for (let i = chapters.length - 1; i >= 0; i--) {
+      const line = `Chapter ${chapters[i].n ?? i + 1}: ${chapters[i].summary ?? ""}\n`;
+      if (summaries.length + line.length > 12000) break;
+      summaries = line + summaries;
+    }
+    const { arc: _arc, chapter: _ch, style: _st, updatedAt: _u, ...hidden } = cur;
+    const model = await languageModels.resolveForRequest({ connectionId: doc.data?.connectionId ?? undefined });
+    const out = await model.chatComplete(
+      [
+        { role: "system", content: `${ARC_PROMPT[mode]}\n${TWIST_PLAN[normalizeSettings(doc.data?.settings, cur.style).twists]}\n${ARC_SHAPE}` },
+        {
+          role: "user",
+          content: [
+            await planContext(doc.data ?? {}, cur.premise || doc.data?.premise || ""),
+            `Chapters so far (${chapters.length}):\n${summaries || "None yet."}`,
+            `Current plan (arc ${cur.arc}):\n${JSON.stringify(hidden)}`,
+            direction && `Reader's direction:\n${direction}`,
+          ].filter(Boolean).join("\n\n"),
+        },
+      ],
+      { temperature: 0.8, maxTokens: 2500 },
+    );
+    const parsed = json.parseJsonish(out.content ?? "");
+    if (!Array.isArray(parsed?.outline) || typeof parsed?.beat !== "string") throw new Error("The model did not return an arc plan");
+    const next = normalizePlan({ ...cur, ...parsed, arc: mode === "next" ? cur.arc + 1 : cur.arc });
+    return view(await writePlan(documents, doc.id, next, existing?.revision ?? null));
   };
 
   const cleanupRoutes = await api.registerPrivilegedRoutes(
@@ -177,28 +240,13 @@ export async function activate({ api }) {
 
       app.post("/stories", async (request, reply) => {
         const body = request.body && typeof request.body === "object" ? request.body : {};
-        const title = typeof body.title === "string" ? body.title.trim() : "";
-        if (!title || title.length > 200) return reply.code(400).send({ error: "Title must be 1-200 characters" });
-        if (body.premise !== undefined && body.premise !== null && (typeof body.premise !== "string" || body.premise.trim().length > 2000)) {
-          return reply.code(400).send({ error: "Premise must be at most 2000 characters" });
-        }
-        if (body.characterIds !== undefined && !validIdArray(body.characterIds)) {
-          return reply.code(400).send({ error: "characterIds must be at most 20 strings of 1-100 characters" });
-        }
-        if (body.lorebookIds !== undefined && !validIdArray(body.lorebookIds)) {
-          return reply.code(400).send({ error: "lorebookIds must be at most 20 strings of 1-100 characters" });
-        }
-        if (body.connectionId !== undefined && body.connectionId !== null && (typeof body.connectionId !== "string" || body.connectionId.length > 200)) {
-          return reply.code(400).send({ error: "connectionId must be a string or null" });
-        }
+        const bad = setupError(body);
+        if (bad) return reply.code(400).send({ error: bad });
 
         const settings = normalizeSettings(body.settings);
         const id = `story:${randomUUID()}`;
         const createdAt = new Date().toISOString();
-        const premise = typeof body.premise === "string" ? body.premise.trim() : "";
-        const characterIds = Array.isArray(body.characterIds) ? body.characterIds.map((x) => x.trim()) : [];
-        const lorebookIds = Array.isArray(body.lorebookIds) ? body.lorebookIds.map((x) => x.trim()) : [];
-        const connectionId = typeof body.connectionId === "string" ? body.connectionId.trim() || null : null;
+        const { title, premise, characterIds, lorebookIds, connectionId } = cleanSetup(body);
 
         await documents.create({
           id,
@@ -212,11 +260,27 @@ export async function activate({ api }) {
         });
 
         try {
-          await createPlan({ storyId: id, premise, style: body.style, connectionId, story: { characterIds, lorebookIds, settings } });
+          await createPlan({ storyId: id, premise, style: body.style ?? settings, connectionId, story: { characterIds, lorebookIds, settings } });
           return reply.code(201).send({ id });
         } catch (error) {
           return reply.code(201).send({ id, planError: error?.message ?? String(error) });
         }
+      });
+
+      // Changing the cast or premise does not re-plan the story; the hidden plan keeps what it had until the reader revises it.
+      app.put("/stories/:id/setup", async (request, reply) => {
+        const doc = await docStory(request, reply);
+        if (!doc) return;
+        const body = request.body && typeof request.body === "object" ? request.body : {};
+        const bad = setupError(body);
+        if (bad) return reply.code(400).send({ error: bad });
+        const setup = cleanSetup(body);
+        const planDoc = await readPlan(documents, doc.id);
+        const cur = normalizeSettings(doc.data?.settings, planDoc?.data?.style);
+        const settings = normalizeSettings({ ...cur, presetName: body.presetName ?? cur.presetName, presetText: body.presetText ?? cur.presetText }, planDoc?.data?.style);
+        await documents.update({ id: doc.id, packageId: PACKAGE_ID, name: setup.title, description: doc.description, data: { ...doc.data, ...setup, settings }, updatedAt: new Date().toISOString(), expectedRevision: doc.revision });
+        if (planDoc) await writePlan(documents, doc.id, { ...planDoc.data, premise: setup.premise }, planDoc.revision);
+        return { ok: true };
       });
 
       app.put("/stories/:id/settings", async (request, reply) => {
@@ -227,10 +291,65 @@ export async function activate({ api }) {
         return { settings };
       });
 
+      app.put("/stories/:id/overrides/:n", async (request, reply) => {
+        const doc = await docStory(request, reply);
+        if (!doc) return;
+        const n = Number(request.params.n);
+        const count = Number.isInteger(doc.data?.chapterCount) ? doc.data.chapterCount : 0;
+        if (!Number.isInteger(n) || n <= count || n > 9999) return reply.code(400).send({ error: "Overrides can only be set for chapters not written yet" });
+        // Past chapters' overrides are dead weight, so they are dropped on every save.
+        const kept = Object.fromEntries(Object.entries(normalizeOverrides(doc.data?.chapterOverrides)).filter(([k]) => Number(k) > count));
+        delete kept[n];
+        const override = normalizeOverride(request.body);
+        if (Object.keys(override).length) kept[n] = override;
+        await documents.update({ id: doc.id, packageId: PACKAGE_ID, name: doc.name, description: doc.description, data: { ...doc.data, chapterOverrides: kept }, updatedAt: new Date().toISOString(), expectedRevision: doc.revision });
+        return { chapterOverrides: kept };
+      });
+
+      app.post("/stories/:id/rewind/:n", async (request, reply) => {
+        const doc = await docStory(request, reply);
+        if (!doc) return;
+        if (jobs.isRunning(doc.id)) return reply.code(409).send({ error: "A job is already running for this story" });
+        const note = typeof request.body?.note === "string" ? request.body.note.trim().slice(0, 500) : "";
+        try {
+          const total = await rewindStory(documents, doc.id, Number(request.params.n));
+          return { jobId: jobs.start(doc.id, { count: total, nudge: note || undefined }), total };
+        } catch (error) {
+          return reply.code(409).send({ error: error?.message ?? String(error) });
+        }
+      });
+
+      // Summaries can hold reveals, so they only go out for chapters the reader says they have read.
+      app.get("/stories/:id/recap", async (request, reply) => {
+        const doc = await docStory(request, reply);
+        if (!doc) return;
+        const upTo = Math.max(0, Math.trunc(Number(request.query?.upTo) || 0));
+        const chapters = (await loadChapters(doc)).filter((c) => c.n <= upTo);
+        const last = chapters.at(-1);
+        return {
+          summaries: chapters.map((c) => ({ n: c.n, title: c.title, summary: c.summary ?? "" })),
+          trackers: last?.trackers && typeof last.trackers === "object" ? last.trackers : {},
+        };
+      });
+
+      app.post("/stories/:id/arc", async (request, reply) => {
+        const doc = await docStory(request, reply);
+        if (!doc) return;
+        const mode = request.body?.mode;
+        if (mode !== "revise" && mode !== "next") return reply.code(400).send({ error: "mode must be revise or next" });
+        const direction = typeof request.body?.direction === "string" ? request.body.direction.trim().slice(0, 1000) : "";
+        if (jobs.isRunning(doc.id)) return reply.code(409).send({ error: "A job is already running for this story" });
+        try {
+          return await reviseArc(doc, mode, direction);
+        } catch (error) {
+          return reply.code(502).send({ error: `Could not plan the arc: ${error?.message ?? error}` });
+        }
+      });
+
       app.get("/stories/:id", async (request, reply) => {
         const doc = await docStory(request, reply);
         if (!doc) return;
-        return storyView(doc, await loadChapters(doc));
+        return storyView(doc, await loadChapters(doc), normalizePlan((await readPlan(documents, doc.id))?.data).style);
       });
 
       app.get("/stories/:id/chapters/:n", async (request, reply) => {

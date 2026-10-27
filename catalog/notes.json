@@ -902,6 +902,18 @@
     "story-writer": {
       "versions": [
         {
+          "version": "0.11.0",
+          "date": "2026-10-26",
+          "notes": "- Added: Rewrite from here. Open a chapter to delete it and everything after it, restore the hidden plan to how it was before it, and write them again to the same length, with an optional note. Chapters from before this update can only be rewound from the last one.\n- Added: chapters that went wrong show \"Needs a look\" with the reasons: a low score, rewrites, agent edits or a failed plan step.\n- Added: Story setup, to edit a story's title, premise, characters, lorebooks, connection and preset later. It does not re-plan, so use Plan → Revise arc afterwards.\n- Added: Continue reading, unread counts, a \"Story so far\" drawer, and a note for a single chapter under Chapter N overrides.\n- Changed: a nudge now applies to the first chapter of a run only.",
+          "highlight": true
+        },
+        {
+          "version": "0.10.0",
+          "date": "2026-10-26",
+          "notes": "- Added: Revise arc and Next arc in the Plan panel, with an optional direction. Revise arc re-plans the rest of the current arc from where the story stands. Next arc starts a fresh outline once the current one is done, so a story can keep going past its first 12 or so chapters. Both read your chapter summaries and replace the hidden plan, so each asks you to click twice.\n- Added: chapter length, point of view and tense are now Author controls, next to the other story settings.\n- Added: per-chapter overrides. Under \"Chapter N overrides\", tick any Author control (including the style guide and agents) to change it for the next chapter only. Everything unticked follows the story settings.",
+          "highlight": true
+        },
+        {
           "version": "0.9.0",
           "date": "2026-10-22",
           "notes": "- Added: Agents in Author controls. Pick installed agents to run after every chapter, up to five. Checkers such as Continuity Checker, Prose Guardian and Fanfic Writer rewrite the chapter when they find problems. Trackers such as Character Tracker and World State keep notes that the author reads before the next chapter. Fanfic Writer replaces the built-in out-of-character check when you pick it. Each agent adds one model call per chapter.",

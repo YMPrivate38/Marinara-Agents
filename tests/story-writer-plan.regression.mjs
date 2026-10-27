@@ -121,4 +121,20 @@ const overwritten = await writePlan(documents, "story:1", { ...created.data, bea
 assert.equal(overwritten.revision, 3);
 assert.equal((await readPlan(documents, "story:1")).data.beat, "Latest");
 
+// settings carry the chapter style; stories without it fall back to the plan's legacy style
+{
+  const { normalizeSettings, normalizeOverrides, effectiveSettings, normalizePlan } = await import("../packages/story-writer/plan.mjs");
+  assert.equal(normalizeSettings({}, { chapterWords: 1900, pointOfView: "first person" }).chapterWords, 1900);
+  assert.equal(normalizeSettings({ chapterWords: 700 }, { chapterWords: 1900 }).chapterWords, 700);
+  assert.equal(normalizeSettings({}).tense, "past");
+  // overrides keep only the keys given, drop junk chapter numbers, and win over the story settings for that chapter only
+  const ov = normalizeOverrides({ 3: { twists: "free", chapterWords: 99999, nope: 1 }, 0: { twists: "none" }, x: { twists: "none" }, 4: {} });
+  assert.deepEqual(ov, { 3: { twists: "free", chapterWords: 8000 } });
+  assert.equal(effectiveSettings({ twists: "none", minScore: 9 }, ov, 3).twists, "free");
+  assert.equal(effectiveSettings({ twists: "none", minScore: 9 }, ov, 3).minScore, 9);
+  assert.equal(effectiveSettings({ twists: "none" }, ov, 4).twists, "none");
+  assert.equal(normalizePlan({ arc: 3 }).arc, 3);
+  assert.equal(normalizePlan({ arc: 0 }).arc, 1);
+}
+
 console.log("story-writer plan ok");

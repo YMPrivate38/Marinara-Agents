@@ -77,6 +77,22 @@ const h = (tag, text, attrs = {}) => {
   }
   return e;
 };
+// Reading position is a per-browser convenience, so storage failures are ignored.
+const readKey = (id) => `sw-read:${id}`;
+const lastRead = (id) => {
+  try {
+    return clampInt(globalThis.localStorage?.getItem(readKey(id)), 0, 9999, 0);
+  } catch {
+    return 0;
+  }
+};
+const setLastRead = (id, n) => {
+  try {
+    if (n > lastRead(id)) globalThis.localStorage?.setItem(readKey(id), String(n));
+  } catch {
+    // ignore
+  }
+};
 const api = () => globalThis.__MARINARA_HOST__.api.api;
 let pickerSeq = 0;
 
@@ -102,6 +118,9 @@ const normalizeAgents = (v) =>
 const normalizeSettings = (raw) => {
   const s = raw && typeof raw === "object" ? raw : {};
   return {
+    chapterWords: StoryWriterElement.clampWords(s.chapterWords),
+    pointOfView: POVS.includes(s.pointOfView) ? s.pointOfView : POVS[0],
+    tense: TENSES.includes(s.tense) ? s.tense : TENSES[0],
     twists: ["none", "rare", "free"].includes(s.twists) ? s.twists : "rare",
     presetName: str(s.presetName, 200),
     presetText: str(s.presetText, 6000),
@@ -203,35 +222,6 @@ class StoryWriterElement extends HTMLElement {
     const tail = suffix ? (suffix.startsWith("/") ? suffix : `/${suffix}`) : "";
     return `/story-writer/stories/${encodeURIComponent(id)}${tail}`;
   }
-  static styleFields(style = {}) {
-    const words = h("input", null, {
-      type: "number",
-      min: "300",
-      max: "8000",
-      value: String(StoryWriterElement.clampWords(style?.chapterWords)),
-    });
-    const pov = h("select");
-    for (const p of POVS) pov.append(h("option", p, { value: p }));
-    pov.value = POVS.includes(style?.pointOfView) ? style.pointOfView : POVS[0];
-    const tense = h("select");
-    for (const t of TENSES) tense.append(h("option", t, { value: t }));
-    tense.value = TENSES.includes(style?.tense) ? style.tense : TENSES[0];
-    return {
-      nodes: [
-        h("label", "Chapter length (words)"),
-        words,
-        h("label", "Point of view"),
-        pov,
-        h("label", "Tense"),
-        tense,
-      ],
-      value: () => ({
-        chapterWords: StoryWriterElement.clampWords(words.value),
-        pointOfView: pov.value,
-        tense: tense.value,
-      }),
-    };
-  }
   static unwrapPage(res) {
     if (Array.isArray(res)) return { items: res, hasMore: false };
     if (Array.isArray(res?.items)) return { items: res.items, hasMore: Boolean(res.hasMore) };
@@ -255,50 +245,45 @@ class StoryWriterElement extends HTMLElement {
       atLimit: false,
     };
   }
-  static authorFields(initial = {}) {
+  // Each field is { key, nodes, value } so the same controls serve the story settings and the per-chapter overrides.
+  static authorFieldList(initial = {}) {
     const init = normalizeSettings(initial);
-    const twists = h("select");
-    for (const [val, label] of TWISTS) twists.append(h("option", label, { value: val }));
-    twists.value = init.twists;
-    const twistHint = h("p", "Rare = the author only follows the premise and cards, no invented twists", {
-      className: "sw-muted",
-    });
-
+    const select = (options, value) => {
+      const el = h("select");
+      for (const [val, label] of options) el.append(h("option", label, { value: val }));
+      el.value = value;
+      return el;
+    };
+    const num = (min, max, value) => h("input", null, { type: "number", min: String(min), max: String(max), value: String(value) });
+    const words = num(300, 8000, init.chapterWords);
+    const pov = select(POVS.map((p) => [p, p]), init.pointOfView);
+    const tense = select(TENSES.map((t) => [t, t]), init.tense);
+    const twists = select(TWISTS, init.twists);
     const checker = h("input", null, init.checker ? { type: "checkbox", checked: "checked" } : { type: "checkbox" });
     checker.checked = init.checker;
     const checkerLabel = h("label", null);
     checkerLabel.append(checker, h("span", "Check chapters for out-of-character writing and rewrite"));
-
-    const minScore = h("input", null, {
-      type: "number",
-      min: "1",
-      max: "10",
-      value: String(init.minScore),
-    });
-    const maxRetries = h("input", null, {
-      type: "number",
-      min: "0",
-      max: "3",
-      value: String(init.maxRetries),
-    });
-
+    const minScore = num(1, 10, init.minScore);
+    const maxRetries = num(0, 3, init.maxRetries);
+    return [
+      { key: "chapterWords", nodes: [h("label", "Chapter length (words)"), words], value: () => ({ chapterWords: StoryWriterElement.clampWords(words.value) }) },
+      { key: "pointOfView", nodes: [h("label", "Point of view"), pov], value: () => ({ pointOfView: pov.value }) },
+      { key: "tense", nodes: [h("label", "Tense"), tense], value: () => ({ tense: tense.value }) },
+      {
+        key: "twists",
+        nodes: [h("label", "Twists"), twists, h("p", "Rare = the author only follows the premise and cards, no invented twists", { className: "sw-muted" })],
+        value: () => ({ twists: TWISTS.some(([v]) => v === twists.value) ? twists.value : "rare" }),
+      },
+      { key: "checker", nodes: [checkerLabel], value: () => ({ checker: Boolean(checker.checked) }) },
+      { key: "minScore", nodes: [h("label", "Minimum score (1-10)"), minScore], value: () => ({ minScore: clampInt(minScore.value, 1, 10, 7) }) },
+      { key: "maxRetries", nodes: [h("label", "Max rewrites (0-3)"), maxRetries], value: () => ({ maxRetries: clampInt(maxRetries.value, 0, 3, 2) }) },
+    ];
+  }
+  static authorFields(initial = {}) {
+    const fields = StoryWriterElement.authorFieldList(initial);
     return {
-      nodes: [
-        h("label", "Twists"),
-        twists,
-        twistHint,
-        checkerLabel,
-        h("label", "Minimum score (1-10)"),
-        minScore,
-        h("label", "Max rewrites (0-3)"),
-        maxRetries,
-      ],
-      value: () => ({
-        twists: TWISTS.some(([v]) => v === twists.value) ? twists.value : "rare",
-        checker: Boolean(checker.checked),
-        minScore: clampInt(minScore.value, 1, 10, 7),
-        maxRetries: clampInt(maxRetries.value, 0, 3, 2),
-      }),
+      nodes: fields.flatMap((f) => f.nodes),
+      value: () => Object.assign({}, ...fields.map((f) => f.value())),
     };
   }
   static agentKind(cfg) {
@@ -412,7 +397,63 @@ class StoryWriterElement extends HTMLElement {
       },
     };
   }
-  static picker({ label, path, nameOf = (r) => r?.name || r?.id || "", max = 20, sort = "", onChange = null } = {}) {
+  // Prompt preset selector (hidden if GET /prompts fails). Starts on `initial` when given; value() is { presetName, presetText }.
+  static presetPicker(initial = {}) {
+    let presetName = initial.presetName ?? "";
+    let presetText = initial.presetText ?? "";
+    const presetNames = new Map();
+    const presetWrap = h("div", null, { className: "sw-stack", style: "display:grid;gap:6px" });
+    const presetSelect = h("select");
+    presetSelect.append(h("option", presetName ? `Keep "${presetName}"` : "No preset", { value: "" }));
+    const presetHint = h("p", "", { className: "sw-muted" });
+    presetWrap.append(h("label", "Prompt preset"), presetSelect, presetHint);
+
+    api()
+      .get("/prompts")
+      .then((rows) => {
+        if (!Array.isArray(rows)) throw new Error("Invalid prompts");
+        if (presetName) presetSelect.append(h("option", "No preset", { value: "none" }));
+        for (const p of rows) {
+          if (!p?.id) continue;
+          const nm = p.name || p.id;
+          presetNames.set(p.id, nm);
+          presetSelect.append(h("option", nm, { value: p.id }));
+        }
+      })
+      .catch(() => {
+        presetWrap.hidden = true;
+        presetWrap.setAttribute("style", "display:none");
+        presetWrap.replaceChildren();
+      });
+
+    presetSelect.addEventListener("change", async () => {
+      const id = presetSelect.value;
+      if (!id || id === "none") {
+        if (id === "none") {
+          presetName = "";
+          presetText = "";
+        } else {
+          presetName = initial.presetName ?? "";
+          presetText = initial.presetText ?? "";
+        }
+        presetHint.textContent = "";
+        return;
+      }
+      try {
+        const full = await api().get(`/prompts/${id}/full`);
+        presetText = StoryWriterElement.presetText(full);
+        presetName = full?.preset?.name || presetNames.get(id) || "";
+        presetHint.textContent = presetText.length ? `${presetText.length} characters` : "This preset has no plain-text sections";
+      } catch (error) {
+        presetName = initial.presetName ?? "";
+        presetText = initial.presetText ?? "";
+        presetHint.textContent = error?.message ?? String(error);
+      }
+    });
+    return { nodes: [presetWrap], value: () => ({ presetName, presetText }) };
+  }
+
+  static picker({ label, path, nameOf = (r) => r?.name || r?.id || "", max = 20, sort = "", onChange = null, initial = [] } = {}) {
     const text = /^(characters|lorebooks)$/i.test(label) ? `Search ${label.toLowerCase()}` : label || "Search";
     const hideOnFail = path === "/lorebooks";
     const inputId = `sw-picker-${++pickerSeq}`;
@@ -422,7 +463,7 @@ class StoryWriterElement extends HTMLElement {
     });
     wrap.hidden = hideOnFail;
 
-    let selected = [];
+    let selected = initial.map((id) => ({ id, name: id }));
     let rows = [];
     let offset = 0;
     let hasMore = false;
@@ -522,6 +563,18 @@ class StoryWriterElement extends HTMLElement {
     moreBtn.addEventListener("click", () => fetchPage(offset + 20));
 
     wrap.append(labelEl, chipsBox, countEl, input, statusEl, resultsBox, moreBox);
+    // Chips start as bare ids; swap in names once each row loads (a failed lookup keeps the id).
+    renderChips();
+    for (const id of initial) {
+      api()
+        .get(`${path}/${encodeURIComponent(id)}`)
+        .then((row) => {
+          const hit = selected.find((x) => x.id === id);
+          if (hit) hit.name = String(nameOf(row) || id);
+          renderChips();
+        })
+        .catch(() => {});
+    }
     fetchPage(0);
     return {
       nodes: [wrap],
@@ -611,6 +664,7 @@ class StoryWriterElement extends HTMLElement {
       row.append(
         h("strong", s.title || s.name || "Untitled"),
         h("span", `${s.chapterCount ?? 0} chapters`, { className: "sw-muted", style: "opacity:0.7" }),
+        ...((s.chapterCount ?? 0) > lastRead(s.id) && lastRead(s.id) > 0 ? [h("span", `${s.chapterCount - lastRead(s.id)} unread`, { className: "sw-muted" })] : []),
         h("span", when ? new Date(when).toLocaleString() : "", { className: "sw-muted", style: "opacity:0.7" }),
       );
       const open = h("button", "Open", { type: "button" });
@@ -721,54 +775,7 @@ class StoryWriterElement extends HTMLElement {
       max: 20,
     });
 
-    // Prompt preset selector (hidden if GET /prompts fails).
-    let presetName = "";
-    let presetText = "";
-    const presetNames = new Map();
-    const presetWrap = h("div", null, { className: "sw-stack", style: "display:grid;gap:6px" });
-    const presetSelect = h("select");
-    presetSelect.append(h("option", "No preset", { value: "" }));
-    const presetHint = h("p", "", { className: "sw-muted" });
-    presetWrap.append(h("label", "Prompt preset"), presetSelect, presetHint);
-
-    api()
-      .get("/prompts")
-      .then((rows) => {
-        if (!Array.isArray(rows)) throw new Error("Invalid prompts");
-        for (const p of rows) {
-          if (!p?.id) continue;
-          const nm = p.name || p.id;
-          presetNames.set(p.id, nm);
-          presetSelect.append(h("option", nm, { value: p.id }));
-        }
-      })
-      .catch(() => {
-        presetWrap.hidden = true;
-        presetWrap.setAttribute("style", "display:none");
-        presetWrap.replaceChildren();
-      });
-
-    presetSelect.addEventListener("change", async () => {
-      const id = presetSelect.value;
-      if (!id) {
-        presetName = "";
-        presetText = "";
-        presetHint.textContent = "";
-        return;
-      }
-      try {
-        const full = await api().get(`/prompts/${id}/full`);
-        presetText = StoryWriterElement.presetText(full);
-        presetName = full?.preset?.name || presetNames.get(id) || "";
-        presetHint.textContent = presetText.length
-          ? `${presetText.length} characters`
-          : "This preset has no plain-text sections";
-      } catch (error) {
-        presetName = "";
-        presetText = "";
-        presetHint.textContent = error?.message ?? String(error);
-      }
-    });
+    const preset = StoryWriterElement.presetPicker();
 
     const author = StoryWriterElement.authorFields();
     const agents = StoryWriterElement.agentPicker();
@@ -776,7 +783,7 @@ class StoryWriterElement extends HTMLElement {
     advanced.open = true;
     advanced.append(
       h("summary", "Author controls"),
-      presetWrap,
+      ...preset.nodes,
       h("label", "Opening (optional)"),
       introInput,
       startWrap,
@@ -784,7 +791,6 @@ class StoryWriterElement extends HTMLElement {
       ...agents.nodes,
     );
 
-    const style = StoryWriterElement.styleFields({ chapterWords: 2500, pointOfView: POVS[0], tense: "past" });
     const status = h("p", "", { className: "sw-muted" });
     const submit = h("button", "Create story", { type: "submit", className: "sw-btn-primary" });
 
@@ -798,7 +804,6 @@ class StoryWriterElement extends HTMLElement {
       ...charPicker.nodes,
       ...lorePicker.nodes,
       advanced,
-      ...style.nodes,
       submit,
       status,
     );
@@ -819,8 +824,7 @@ class StoryWriterElement extends HTMLElement {
       try {
         const settings = normalizeSettings({
           ...author.value(),
-          presetName,
-          presetText,
+          ...preset.value(),
           intro: (introInput.value ?? "").slice(0, 4000),
           agents: agents.value(),
         });
@@ -830,7 +834,6 @@ class StoryWriterElement extends HTMLElement {
           characterIds,
           lorebookIds,
           connectionId: conn.value || null,
-          style: style.value(),
           settings,
         });
         const notice = res?.planError
@@ -859,6 +862,7 @@ class StoryWriterElement extends HTMLElement {
     if (notice) this.readerNotice = notice;
     try {
       const story = await api().get(StoryWriterElement.storyPath(id));
+      this.connections = await api().get("/connections").catch(() => []);
       this.renderReader(story);
     } catch (error) {
       const back = h("button", "Back", { type: "button", className: "sw-btn-ghost" });
@@ -921,9 +925,6 @@ class StoryWriterElement extends HTMLElement {
       });
       kids.push(reveal);
 
-      const style = StoryWriterElement.styleFields(plan.style);
-      kids.push(...style.nodes);
-
       if (!shown) {
         kids.push(h("p", "Spoilers hidden", { className: "sw-muted" }));
       }
@@ -942,7 +943,7 @@ class StoryWriterElement extends HTMLElement {
 
       const save = h("button", "Save", { type: "button", className: "sw-btn-primary" });
       save.addEventListener("click", async () => {
-        const next = { ...plan, style: style.value() };
+        const next = { ...plan };
         if (shown) {
           for (const k of LISTS) {
             next[k] = k === "twists" ? StoryWriterElement.parseTwists(fields[k].value) : StoryWriterElement.listLines(fields[k].value);
@@ -983,7 +984,7 @@ class StoryWriterElement extends HTMLElement {
         regen.disabled = true;
         msg.textContent = "Generating…";
         try {
-          state = await api().post(url, { premise: story.premise ?? plan.premise ?? "", style: style.value() });
+          state = await api().post(url, { premise: story.premise ?? plan.premise ?? "", style: plan.style });
           conflict = false;
           msg.textContent = "";
           draw();
@@ -993,6 +994,41 @@ class StoryWriterElement extends HTMLElement {
           regen.textContent = "Regenerate";
         }
       });
+
+      // Both arc actions replace the hidden plan, so each needs a second click within 4 seconds.
+      const direction = h("input", null, { type: "text", value: "", maxlength: "1000", placeholder: "Direction for the arc (optional)" });
+      const arcButton = (label, mode) => {
+        const btn = h("button", label, { type: "button" });
+        let timer = null;
+        btn.addEventListener("click", async () => {
+          if (!timer) {
+            btn.textContent = `Confirm: ${label.toLowerCase()}`;
+            timer = setTimeout(() => {
+              timer = null;
+              btn.textContent = label;
+            }, 4000);
+            return;
+          }
+          clearTimeout(timer);
+          timer = null;
+          btn.disabled = true;
+          msg.textContent = "Planning…";
+          try {
+            state = await api().post(StoryWriterElement.storyPath(story.id, "/arc"), { mode, direction: direction.value });
+            conflict = false;
+            msg.textContent = mode === "next" ? `Arc ${state.plan?.arc ?? ""} planned.` : "Arc revised.";
+            draw();
+          } catch (error) {
+            msg.textContent = `Could not plan the arc: ${error?.message ?? error}`;
+            btn.disabled = false;
+            btn.textContent = label;
+          }
+        });
+        return btn;
+      };
+      const arcBar = h("div", null, { className: "sw-bar", style: "display:flex;gap:8px;flex-wrap:wrap" });
+      arcBar.append(arcButton("Revise arc", "revise"), arcButton("Next arc", "next"));
+      kids.push(h("label", `Arc ${plan.arc ?? 1}`), direction, arcBar);
 
       const bar = h("div", null, { className: "sw-bar", style: "display:flex;gap:8px;flex-wrap:wrap" });
       bar.append(save, regen);
@@ -1064,6 +1100,118 @@ class StoryWriterElement extends HTMLElement {
     return details;
   }
 
+  // Title, premise, cast, connection and preset. Saving does not re-plan, so the hidden plan can drift from a changed premise or cast.
+  setupPanel(story, connections = []) {
+    const details = h("details", null, { className: "sw-settings" });
+    const title = h("input", null, { type: "text", maxlength: "200", value: story.title ?? "" });
+    const premise = h("textarea", story.premise ?? "", { rows: "4", maxlength: "2000" });
+    const conn = h("select");
+    conn.append(h("option", "Engine default", { value: "" }));
+    for (const c of StoryWriterElement.connections(connections)) conn.append(h("option", c.name || c.id, { value: c.id }));
+    conn.value = story.connectionId ?? "";
+    const chars = StoryWriterElement.picker({ label: "Search characters", path: "/characters", nameOf: StoryWriterElement.characterName, max: 20, sort: "name-asc", initial: story.characterIds });
+    const lore = StoryWriterElement.picker({ label: "Search lorebooks", path: "/lorebooks", nameOf: (l) => l?.name || l?.id || "", max: 20, initial: story.lorebookIds });
+    const preset = StoryWriterElement.presetPicker(story.settings);
+    const msg = h("p", "", { className: "sw-muted" });
+    const saveBtn = h("button", "Save setup", { type: "button", className: "sw-btn-primary" });
+    saveBtn.addEventListener("click", async () => {
+      if (!(title.value ?? "").trim()) return void (msg.textContent = "Title is required.");
+      saveBtn.disabled = true;
+      try {
+        await api().put(StoryWriterElement.storyPath(story.id, "/setup"), {
+          title: title.value,
+          premise: premise.value,
+          characterIds: chars.value(),
+          lorebookIds: lore.value(),
+          connectionId: conn.value || null,
+          ...preset.value(),
+        });
+        this.readerNotice = "Setup saved. The hidden plan was not changed; use Plan → Revise arc if the story should follow the new premise or cast.";
+        await this.openStory(story.id);
+      } catch (error) {
+        msg.textContent = error?.message ?? String(error);
+        saveBtn.disabled = false;
+      }
+    });
+    details.append(h("summary", "Story setup"), h("label", "Title"), title, h("label", "Premise"), premise, h("label", "Connection"), conn, ...chars.nodes, ...lore.nodes, ...preset.nodes, saveBtn, msg);
+    return details;
+  }
+
+  // Summaries and tracker notes up to the last chapter the reader has opened; fetched when the drawer opens.
+  recapPanel(story, read) {
+    const details = h("details", null, { className: "sw-settings" });
+    details.append(h("summary", "Story so far"));
+    let loaded = false;
+    details.addEventListener("toggle", async () => {
+      if (!details.open || loaded) return;
+      loaded = true;
+      if (!read) return void details.append(h("p", "Read a chapter first. This only covers chapters you have opened.", { className: "sw-muted" }));
+      try {
+        const res = await api().get(StoryWriterElement.storyPath(story.id, `/recap?upTo=${read}`));
+        for (const c of res.summaries ?? []) details.append(h("p", `${c.n}. ${c.title}: ${c.summary}`, { style: "margin:0" }));
+        for (const [name, text] of Object.entries(res.trackers ?? {})) details.append(h("label", name), h("p", text, { className: "sw-muted", style: "white-space:pre-wrap;margin:0" }));
+      } catch (error) {
+        loaded = false;
+        details.append(h("p", error?.message ?? String(error), { className: "sw-muted" }));
+      }
+    });
+    return details;
+  }
+
+  // Overrides apply to the next chapter only; unchecked settings inherit the story's Author controls.
+  overridesPanel(story) {
+    const next = (story?.chapterCount ?? 0) + 1;
+    const saved = story?.chapterOverrides?.[next] ?? {};
+    const base = normalizeSettings({ ...story?.settings, ...saved });
+    const styleGuide = h("textarea", base.presetText, { rows: "4" });
+    const nudgeBox = h("input", null, { type: "text", maxlength: "500", value: saved.nudge ?? "", placeholder: "What this chapter should cover" });
+    const agents = StoryWriterElement.agentPicker(base.agents);
+    const fields = [
+      ...StoryWriterElement.authorFieldList(base),
+      { key: "nudge", nodes: [h("label", "Note for this chapter"), nudgeBox], value: () => ({ nudge: nudgeBox.value ?? "" }) },
+      { key: "presetText", nodes: [h("label", "Style guide"), styleGuide], value: () => ({ presetText: styleGuide.value ?? "" }) },
+      { key: "agents", nodes: agents.nodes, value: () => ({ agents: agents.value() }) },
+    ];
+    const details = h("details", null, { className: "sw-settings" });
+    details.open = Object.keys(saved).length > 0;
+    details.append(h("summary", `Chapter ${next} overrides`), h("p", "Tick a setting to change it for this chapter only. The rest follow Author controls.", { className: "sw-muted" }));
+    const on = new Set(Object.keys(saved));
+    for (const f of fields) {
+      const toggle = h("input", null, { type: "checkbox" });
+      toggle.checked = on.has(f.key);
+      const body = h("div", null, { className: "sw-stack", style: "display:grid;gap:6px" });
+      body.append(...f.nodes);
+      const sync = () => {
+        body.hidden = !toggle.checked;
+        body.setAttribute("style", toggle.checked ? "display:grid;gap:6px" : "display:none");
+      };
+      toggle.addEventListener("change", () => {
+        if (toggle.checked) on.add(f.key);
+        else on.delete(f.key);
+        sync();
+      });
+      sync();
+      const row = h("label", null);
+      row.append(toggle, h("span", `Override ${f.key.replace(/([A-Z])/g, " $1").toLowerCase()}`));
+      details.append(row, body);
+    }
+    const msg = h("p", "", { className: "sw-muted" });
+    const saveBtn = h("button", "Save overrides", { type: "button", className: "sw-btn-primary" });
+    saveBtn.addEventListener("click", async () => {
+      saveBtn.disabled = true;
+      try {
+        const res = await api().put(StoryWriterElement.storyPath(story.id, `/overrides/${next}`), Object.assign({}, ...fields.filter((f) => on.has(f.key)).map((f) => f.value())));
+        story.chapterOverrides = res?.chapterOverrides ?? {};
+        msg.textContent = "Saved";
+      } catch (error) {
+        msg.textContent = error?.message ?? String(error);
+      }
+      saveBtn.disabled = false;
+    });
+    details.append(saveBtn, msg);
+    return details;
+  }
+
   startPolling(storyId, jobId) {
     // Keep only one poll loop per active job across re-renders.
     if (this.activeJobId === jobId && this.pollTimer) return;
@@ -1101,6 +1249,7 @@ class StoryWriterElement extends HTMLElement {
     try {
       const ch = await api().get(StoryWriterElement.storyPath(storyId, `/chapters/${n}`));
       this.readingChapter = ch;
+      setLastRead(storyId, ch.n ?? n);
       if (this.currentStory?.id === storyId) this.renderReader(this.currentStory);
     } catch (error) {
       this.jobError = `Could not load chapter: ${error?.message ?? error}`;
@@ -1238,7 +1387,14 @@ class StoryWriterElement extends HTMLElement {
     });
 
     controls.append(nudgeLabel, nudgeInput, writeOne, autoLabel, autoInput, writeMany, planBtn, epubBtn, delBtn);
-    root.append(controls, this.settingsPanel(story), statusMsg);
+    const read = lastRead(story.id);
+    const total = story.chapterCount ?? story.chapters?.length ?? 0;
+    if (total > 0 && read < total) {
+      const cont = h("button", read ? `Continue reading (chapter ${read + 1})` : "Start reading", { type: "button", className: "sw-btn-primary" });
+      cont.addEventListener("click", () => this.openChapter(story.id, read + 1));
+      controls.append(cont);
+    }
+    root.append(controls, this.settingsPanel(story), this.overridesPanel(story), this.setupPanel(story, this.connections), this.recapPanel(story, read), statusMsg);
 
     if (isRunning) {
       const job = this.activeJob;
@@ -1278,6 +1434,11 @@ class StoryWriterElement extends HTMLElement {
       readBtn.addEventListener("click", () => this.openChapter(story.id, ch.n));
       top.append(readBtn);
       item.append(top);
+      if (ch.flags?.length) {
+        const flag = h("details", null, { className: "sw-flag" });
+        flag.append(h("summary", "Needs a look"), ...ch.flags.map((f) => h("p", f, { className: "sw-muted", style: "margin:0" })));
+        item.append(flag);
+      }
       if (ch.blurb) {
         item.append(h("p", ch.blurb, { className: "sw-muted", style: "opacity:0.7;margin:0" }));
       }
@@ -1314,10 +1475,42 @@ class StoryWriterElement extends HTMLElement {
       });
       nav.append(prev, next, close);
       pane.append(nav);
+
+      // Rewinding deletes this chapter and everything after it, so it takes a note field and a second click.
+      const rewindNote = h("input", null, { type: "text", maxlength: "500", value: "", placeholder: "What should change? (optional)" });
+      const rewindBtn = h("button", "Rewrite from here", { type: "button" });
+      let rewindTimer = null;
+      rewindBtn.addEventListener("click", async () => {
+        if (!rewindTimer) {
+          rewindBtn.textContent = `Confirm: delete chapters ${ch.n}-${totalCh} and rewrite`;
+          rewindTimer = setTimeout(() => {
+            rewindTimer = null;
+            rewindBtn.textContent = "Rewrite from here";
+          }, 4000);
+          return;
+        }
+        clearTimeout(rewindTimer);
+        rewindTimer = null;
+        rewindBtn.disabled = true;
+        try {
+          const res = await api().post(StoryWriterElement.storyPath(story.id, `/rewind/${ch.n}`), { note: rewindNote.value });
+          this.readingChapter = null;
+          this.activeJob = { id: res.jobId, storyId: story.id, status: "running", done: 0, total: res.total, phase: "writing" };
+          this.startPolling(story.id, res.jobId);
+          await this.openStory(story.id);
+        } catch (error) {
+          statusMsg.textContent = error?.message ?? String(error);
+          rewindBtn.disabled = false;
+          rewindBtn.textContent = "Rewrite from here";
+        }
+      });
+      rewindBtn.disabled = isRunning;
+      pane.append(rewindNote, rewindBtn);
       root.append(pane);
     }
 
     this.setView(root);
+    this.querySelector?.(".sw-reader-pane")?.scrollIntoView?.({ block: "start" });
   }
 }
 
